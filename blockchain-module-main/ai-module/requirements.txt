@@ -1,0 +1,32 @@
+# NEXUS ERP — Module 2 Requirements
+# pip install -r requirements.txt
+
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# Database
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+
+# Auth
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# ML (Module 1 — keep)
+xgboost==2.0.3
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4
+joblib==1.4.2
+
+# Email
+# smtplib is stdlib — no install needed
+
+# Utils
+python-dotenv==1.0.1
+pydantic==2.7.1
+pydantic[email]==2.7.1
+httpx==0.27.0
+
+# Optional: TimescaleDB (same driver, no extra package needed)

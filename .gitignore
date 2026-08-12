@@ -1,0 +1,14 @@
+# Python / Backend
+venv/
+__pycache__/
+*.pyc
+.env
+*.pkl
+ai-module/data/raw/
+ai-module/data/processed/
+ai-module/data/inventory/current_orders.json
+
+# Node / Frontend
+node_modules/
+dist/
+.DS_Store

@@ -1,0 +1,15 @@
+﻿services:
+  db:
+    image: postgres:14
+    container_name: nexus_db
+    environment:
+      POSTGRES_USER: nexus_user
+      POSTGRES_PASSWORD: nexus_pass
+      POSTGRES_DB: nexus_erp
+    ports:
+      - '5432:5432'
+    volumes:
+      - nexus_data:/var/lib/postgresql/data
+
+volumes:
+  nexus_data:

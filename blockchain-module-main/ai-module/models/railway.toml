@@ -1,0 +1,10 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+```
+
+Then also create a `Procfile` (no extension) in `ai-module/`:
+```
+web: uvicorn api.main:app --host 0.0.0.0 --port $PORT

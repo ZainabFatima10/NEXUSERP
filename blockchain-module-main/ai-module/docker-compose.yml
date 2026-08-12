@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL with TimescaleDB ──────────────────────────────────────────
+  db:
+    image: timescale/timescaledb:latest-pg14
+    container_name: nexus_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       nexus_erp
+      POSTGRES_USER:     nexus_user
+      POSTGRES_PASSWORD: nexus_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - nexus_pgdata:/var/lib/postgresql/data
+      # Auto-run schema on first boot
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus_user -d nexus_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── pgAdmin (optional — remove if not needed) ───────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: nexus_pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    admin@nexus.pk
+      PGADMIN_DEFAULT_PASSWORD: nexus2026
+    ports:
+      - "5050:80"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  nexus_pgdata:

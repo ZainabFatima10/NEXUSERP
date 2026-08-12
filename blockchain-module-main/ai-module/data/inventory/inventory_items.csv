@@ -1,0 +1,9 @@
+item_id,name,unit,min_threshold,current_stock,daily_consumption,vendor,vendor_email,status,critical_threshold,days_until_reorder,days_until_critical,last_updated,reorder_quantity
+INV-001,Distribution Transformers (11kV),units,50,142,2.5,Siemens AG,orders@siemens.com,OK,10,37,53,2026-03-12T13:11:55.520222,100
+INV-002,Circuit Breakers (33kV),units,30,23,1.2,ABB Ltd,orders@abb.com,Low,6,0,14,2026-03-12T13:11:55.520235,60
+INV-003,Power Cables (HT),meters,5000,8500,120.0,Nexans,orders@nexans.com,OK,1000,29,62,2026-03-12T13:11:55.520239,10000
+INV-004,Smart Meters (AMI),units,200,4,8.0,Siemens AG,orders@siemens.com,Critical,40,0,0,2026-03-12T13:11:55.520242,400
+INV-005,Surge Arresters,units,100,67,3.0,ABB Ltd,orders@abb.com,Low,20,0,16,2026-03-12T13:11:55.520244,200
+INV-006,Insulators (Porcelain),units,500,312,15.0,NGK Insulators,orders@ngk.com,Low,100,0,14,2026-03-12T13:11:55.520247,1000
+INV-007,Relay Protection Units,units,40,31,1.0,Schneider,orders@schneider.com,Low,8,0,23,2026-03-12T13:11:55.520250,80
+INV-008,Copper Conductors,kg,1000,2,45.0,Prysmian Group,orders@prysmian.com,Critical,200,0,0,2026-03-12T13:11:55.520253,2000

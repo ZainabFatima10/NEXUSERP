@@ -1,0 +1,9 @@
+﻿venv/
+__pycache__/
+*.pyc
+.env
+*.pkl
+data/raw/
+data/processed/
+data/inventory/current_orders.json
+.DS_Store
