@@ -77,7 +77,7 @@ def run_schema(sql_path: str = None):
                     if "already exists" not in str(e).lower():
                         raise
         conn.commit()
-    print("✅ Schema applied successfully.")
+    print("[OK] Schema applied successfully.")
 
 
 def check_connection() -> bool:

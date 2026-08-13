@@ -31,7 +31,7 @@ def _send(to_email: str, subject: str, html_body: str) -> bool:
     """Send an HTML email. Returns True on success."""
     if not SMTP_USER or not SMTP_PASSWORD:
         # Dev mode: just print
-        print(f"\n📧 [DEV EMAIL] To: {to_email} | Subject: {subject}\n")
+        print(f"\n[DEV EMAIL] To: {to_email} | Subject: {subject}\n")
         return True
     try:
         msg = MIMEMultipart("alternative")

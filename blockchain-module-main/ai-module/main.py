@@ -18,6 +18,7 @@ from inventory_v2  import router as inventory_router
 from procurement   import router as procurement_router
 from notifications import router as notifications_router
 from auth          import router as auth_router
+from sales         import router as sales_router
 
 from database import check_connection, run_schema
 
@@ -42,6 +43,7 @@ app.include_router(inventory_router)
 app.include_router(procurement_router)
 app.include_router(notifications_router)
 app.include_router(auth_router)
+app.include_router(sales_router)
 
 
 @app.on_event("startup")

@@ -8,11 +8,25 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from passlib.context import CryptContext
+import bcrypt
 from database import get_db
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8")
+        )
+    except Exception:
+        return False
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
 
 
 class LoginRequest(BaseModel):
@@ -33,7 +47,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
         text("SELECT * FROM users WHERE email=:e AND is_active=TRUE"),
         {"e": req.email},
     ).mappings().first()
-    if not row or not pwd_ctx.verify(req.password, row["password_hash"]):
+    if not row or not verify_password(req.password, row["password_hash"]):
         raise HTTPException(401, "Invalid credentials")
     return {
         "user": {
@@ -63,7 +77,7 @@ def signup(req: SignupRequest, db: Session = Depends(get_db)):
             "id":    uid,
             "name":  req.name,
             "email": req.email,
-            "hash":  pwd_ctx.hash(req.password),
+            "hash":  hash_password(req.password),
             "role":  req.role,
         },
     )
