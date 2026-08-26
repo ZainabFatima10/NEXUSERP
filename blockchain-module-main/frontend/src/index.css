@@ -1,0 +1,184 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light "operations" theme — used by the admin app */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 258 83% 62%;
+    --secondary-foreground: 210 40% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --muted: 210 40% 95%;
+    --muted-foreground: 215 16% 47%;
+
+    --success: 152 69% 36%;
+    --success-foreground: 210 40% 98%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 26 40% 15%;
+
+    --border: 214 32% 90%;
+
+    --accent-cyan: 191 91% 42%;
+    --accent-green: 160 84% 33%;
+    --accent-violet: 258 83% 62%;
+    --accent-amber: 38 92% 50%;
+
+    /* Dark sidebar, used inside the (light) admin shell */
+    --sidebar: 222 55% 12%;
+    --sidebar-foreground: 210 30% 92%;
+    --sidebar-muted: 215 20% 65%;
+    --sidebar-border: 222 40% 20%;
+  }
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: "Manrope", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Chakra Petch", sans-serif;
+}
+
+::selection {
+  background-color: hsl(var(--primary) / 0.25);
+}
+
+/* Slim, quiet scrollbars used throughout the admin app */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 999px;
+}
+body {
+  scrollbar-width: thin;
+}
+
+/* ── Shared component classes (admin app) ─────────────────────────── */
+
+.glass-card {
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  border: 1px solid hsl(var(--border));
+}
+
+.glow-cyan {
+  box-shadow: 0 0 0 1px hsl(var(--accent-cyan) / 0.3), 0 12px 32px -12px hsl(var(--accent-cyan) / 0.4);
+}
+
+.glow-cyan-hover {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.glow-cyan-hover:hover {
+  box-shadow: 0 0 0 1px hsl(var(--accent-cyan) / 0.25), 0 12px 28px -14px hsl(var(--accent-cyan) / 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-navy {
+  background-color: hsl(var(--primary));
+  color: white;
+  border-radius: 10px;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.btn-navy:hover {
+  opacity: 0.92;
+}
+.btn-navy:active {
+  transform: scale(0.98);
+}
+
+/* ── Marketing site (dark, "grid" identity) ───────────────────────── */
+
+.marketing {
+  background-color: #050b18;
+  color: #e7edf7;
+  font-family: "Manrope", sans-serif;
+}
+
+.marketing h1,
+.marketing h2,
+.marketing h3,
+.marketing h4 {
+  font-family: "Chakra Petch", sans-serif;
+}
+
+/* Circuit / transmission-grid backdrop for the hero */
+.grid-bg {
+  background-image:
+    linear-gradient(hsl(210 60% 90% / 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, hsl(210 60% 90% / 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, black 40%, transparent 100%);
+}
+
+.hero-glow {
+  background: radial-gradient(60% 50% at 50% 0%, hsl(221 83% 53% / 0.35), transparent 70%),
+    radial-gradient(35% 35% at 85% 15%, hsl(191 91% 42% / 0.25), transparent 70%);
+}
+
+.gradient-text {
+  background: linear-gradient(92deg, #7fd8ff 0%, #6fa8ff 45%, #a48bff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.node-dot {
+  animation: pulse-node 2.4s ease-in-out infinite;
+}
+
+.current-line {
+  background: linear-gradient(90deg, transparent, #6fa8ff, #7fd8ff, transparent);
+  background-size: 200% 100%;
+  animation: flow-x 3s linear infinite;
+}
+
+.marketing-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+}
+
+.marketing-card:hover {
+  border-color: rgba(127, 216, 255, 0.35);
+}
+
+.noise-overlay {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

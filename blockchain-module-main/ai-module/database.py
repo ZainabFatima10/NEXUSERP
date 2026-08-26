@@ -18,7 +18,7 @@ DB_USER     = os.getenv("DB_USER", "nexus_user")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "nexus_pass")
 
 DATABASE_URL = (
-    f"postgresql://{DB_USER}:{DB_PASSWORD}"
+    f"postgresql+pg8000://{DB_USER}:{DB_PASSWORD}"
     f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
 

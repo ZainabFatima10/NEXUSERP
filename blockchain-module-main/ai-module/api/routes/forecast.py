@@ -1,6 +1,9 @@
 from fastapi import APIRouter
-import joblib, numpy as np, sys, os
+import joblib, numpy as np, sys, os, httpx
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+load_dotenv()
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 ai_module_dir = os.path.dirname(os.path.dirname(current_dir))
@@ -10,6 +13,8 @@ if ai_module_dir not in sys.path:
 router = APIRouter()
 
 BASE_DIR = ai_module_dir
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
+
 try:
     demand_model = joblib.load(f"{BASE_DIR}/models/saved/demand_model.pkl")
     outage_model = joblib.load(f"{BASE_DIR}/models/saved/outage_model.pkl")
@@ -18,6 +23,50 @@ except Exception:
     print(f"Warning: Could not load forecast models from {BASE_DIR}. Using dummy predictions.")
     demand_model = outage_model = None
     MODEL_LOADED = False
+
+
+def fetch_weather_data() -> dict:
+    """Fetch 5-day forecast from OpenWeather for Islamabad, averaged by day."""
+    if not OPENWEATHER_API_KEY:
+        return {}
+    try:
+        r = httpx.get(
+            "https://api.openweathermap.org/data/2.5/forecast",
+            params={"q": "Islamabad", "appid": OPENWEATHER_API_KEY, "units": "metric", "cnt": 40},
+            timeout=5.0,
+        )
+        if r.status_code != 200:
+            return {}
+        daily: dict = {}
+        for item in r.json().get("list", []):
+            date_str = item["dt_txt"].split(" ")[0]
+            if date_str not in daily:
+                daily[date_str] = {"temps": [], "humidities": [], "winds": [], "rainfalls": []}
+            daily[date_str]["temps"].append(item["main"]["temp"])
+            daily[date_str]["humidities"].append(item["main"]["humidity"])
+            daily[date_str]["winds"].append(item["wind"]["speed"])
+            daily[date_str]["rainfalls"].append(item.get("rain", {}).get("3h", 0.0))
+        result = {}
+        for date_str, vals in daily.items():
+            result[date_str] = {
+                "temp":     round(sum(vals["temps"]) / len(vals["temps"]), 1),
+                "humidity": round(sum(vals["humidities"]) / len(vals["humidities"]), 1),
+                "wind":     round(sum(vals["winds"]) / len(vals["winds"]), 1),
+                "rainfall": round(sum(vals["rainfalls"]), 1),
+            }
+        return result
+    except Exception:
+        return {}
+
+
+def get_seasonal_defaults(month: int) -> dict:
+    if month in [6, 7, 8]:
+        return {"temp": 37.0, "humidity": 62.0, "wind": 3.8, "rainfall": 8.0}
+    elif month in [12, 1, 2]:
+        return {"temp": 9.0, "humidity": 72.0, "wind": 2.5, "rainfall": 1.0}
+    else:
+        return {"temp": 26.0, "humidity": 55.0, "wind": 3.2, "rainfall": 3.0}
+
 
 def get_risk_level(probability: float) -> str:
     if probability < 40:   return "Low"
@@ -29,52 +78,59 @@ def get_zones(risk: str):
     elif risk == "Medium": return ["G-11", "F-6"]
     else:                  return []
 
-def get_weather_factors(temp: float, wind: float,
-                        rainfall: float, grid_load: float):
+def get_weather_factors(temp: float, wind: float, rainfall: float, grid_load: float):
     factors = []
-    if temp > 35:        factors.append("Heatwave alert")
-    if temp < 5:         factors.append("Cold wave alert")
-    if wind > 6:         factors.append("High wind speed")
-    if rainfall > 10:    factors.append("Heavy rainfall")
-    if grid_load > 90:   factors.append("Grid overload risk")
-    if not factors:      factors.append("Normal conditions")
+    if temp > 35:      factors.append("Heatwave alert")
+    if temp < 5:       factors.append("Cold wave alert")
+    if wind > 6:       factors.append("High wind speed")
+    if rainfall > 10:  factors.append("Heavy rainfall")
+    if grid_load > 90: factors.append("Grid overload risk")
+    if not factors:    factors.append("Normal conditions")
     return factors
 
 def get_actions(risk: str):
     if risk == "High":
-        return ["Load shedding preparation",
-                "Deploy field engineers",
-                "Activate demand response",
-                "Public advisory"]
+        return ["Load shedding preparation", "Deploy field engineers",
+                "Activate demand response", "Public advisory"]
     elif risk == "Medium":
-        return ["Pre-position repair crews",
-                "Alert field engineers"]
+        return ["Pre-position repair crews", "Alert field engineers"]
     else:
         return ["Routine monitoring"]
 
+
 @router.get("/forecast")
 def get_forecast():
-    forecast   = []
-    today      = datetime.today()
+    forecast    = []
+    today       = datetime.today()
     prev_outage = 0
+    live_weather = fetch_weather_data()
+    using_live   = bool(live_weather)
 
     for i in range(7):
-        date  = today + timedelta(days=i)
-        month = date.month
+        date     = today + timedelta(days=i)
+        date_str = date.strftime("%Y-%m-%d")
+        month    = date.month
 
-        if month in [6, 7, 8]:
-            temp, humidity, wind = 37.0, 62.0, 3.8
-            rainfall, grid_load  = 8.0, 88.0
-        elif month in [12, 1, 2]:
-            temp, humidity, wind = 9.0, 72.0, 2.5
-            rainfall, grid_load  = 1.0, 70.0
+        if date_str in live_weather:
+            w        = live_weather[date_str]
+            temp     = w["temp"]
+            humidity = w["humidity"]
+            wind     = w["wind"]
+            rainfall = w["rainfall"]
+            source   = "live"
         else:
-            temp, humidity, wind = 26.0, 55.0, 3.2
-            rainfall, grid_load  = 3.0, 75.0
+            defaults = get_seasonal_defaults(month)
+            temp     = defaults["temp"]
+            humidity = defaults["humidity"]
+            wind     = defaults["wind"]
+            rainfall = defaults["rainfall"]
+            source   = "seasonal_fallback"
 
-        season = (0 if month in [12,1,2] else
-                  1 if month in [3,4,5] else
-                  2 if month in [6,7,8] else 3)
+        grid_load = min(95.0, 60.0 + (temp - 20) * 1.2) if temp > 20 else 65.0
+
+        season = (0 if month in [12, 1, 2] else
+                  1 if month in [3, 4, 5] else
+                  2 if month in [6, 7, 8] else 3)
 
         features = np.array([[
             temp, humidity, wind, rainfall,
@@ -83,32 +139,34 @@ def get_forecast():
 
         if MODEL_LOADED:
             demand      = float(demand_model.predict(features)[0])
-            outage_prob = float(
-                outage_model.predict_proba(features)[0][1] * 100)
+            outage_prob = float(outage_model.predict_proba(features)[0][1] * 100)
         else:
-            # Dummy prediction logic
             demand      = 15000.0 + (temp * 100)
-            outage_prob = 25.0
+            outage_prob = min(95.0, 20.0 + (temp - 25) * 1.5 + (rainfall * 2))
 
         risk        = get_risk_level(outage_prob)
         prev_outage = 1 if outage_prob > 50 else 0
 
         forecast.append({
-            "date":                date.strftime("%Y-%m-%d"),
+            "date":                date_str,
             "day":                 date.strftime("%A"),
             "demand_kwh":          round(demand, 2),
             "outage_probability":  round(outage_prob, 1),
             "risk_level":          risk,
             "affected_zones":      get_zones(risk),
-            "weather_factors":     get_weather_factors(
-                temp, wind, rainfall, grid_load),
-            "recommended_actions": get_actions(risk)
+            "weather_factors":     get_weather_factors(temp, wind, rainfall, grid_load),
+            "recommended_actions": get_actions(risk),
+            "weather_source":      source,
+            "temp_c":              temp,
+            "humidity_pct":        humidity,
         })
 
     return {
-        "generated_at": datetime.utcnow().isoformat(),
-        "forecast":     forecast
+        "generated_at":   datetime.utcnow().isoformat(),
+        "weather_source": "OpenWeatherMap (Islamabad)" if using_live else "Seasonal defaults (no API key)",
+        "forecast":       forecast
     }
+
 
 @router.get("/forecast/{date}")
 def get_forecast_detail(date: str):
@@ -117,3 +175,4 @@ def get_forecast_detail(date: str):
         if day["date"] == date:
             return day
     return {"error": "Date not found in forecast range"}
+

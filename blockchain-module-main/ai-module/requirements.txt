@@ -7,7 +7,7 @@ uvicorn[standard]==0.29.0
 
 # Database
 sqlalchemy==2.0.30
-psycopg2-binary==2.9.9
+pg8000==1.31.1
 
 # Auth
 passlib[bcrypt]==1.7.4

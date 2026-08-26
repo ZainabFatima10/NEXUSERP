@@ -322,3 +322,72 @@ def batch_predict_inventory(db: Session = Depends(get_db)):
         "message": f"Successfully ran predictions for {len(results)} items.",
         "results": results
     }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# GET /demand-forecast — forecast per-item demand on a specific date
+# ────────────────────────────────────────────────────────────────────────────
+
+@router.get("/demand-forecast")
+def get_demand_forecast(date: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Runs each inventory item through the prediction model for a given date.
+    Returns per-item demand predictions and flags whether reorders are needed.
+    """
+    target_date_str = date or datetime.utcnow().strftime("%Y-%m-%d")
+    try:
+        dt = datetime.strptime(target_date_str, "%Y-%m-%d")
+    except Exception:
+        dt = datetime.utcnow()
+        target_date_str = dt.strftime("%Y-%m-%d")
+
+    month = dt.month
+    season = "Winter" if month in [12, 1, 2] else "Spring" if month in [3, 4, 5] else "Summer" if month in [6, 7, 8] else "Autumn"
+
+    rows = db.execute(
+        text("SELECT * FROM inventory_items ORDER BY item_id ASC")
+    ).mappings().all()
+
+    items_out = []
+    total_predicted = 0
+
+    for r in rows:
+        item = dict(r)
+        stock = float(item["current_stock"])
+        min_t = int(item["min_threshold"])
+        crit_t = int(item["critical_threshold"])
+        cat = item.get("category", "Operational")
+
+        # Run prediction
+        pred_demand = calculate_prediction(cat, stock, min_t)
+        total_predicted += pred_demand
+
+        # Compute anticipated status
+        post_stock = max(0, stock - pred_demand)
+        st = _compute_status(stock, min_t, crit_t)
+        reorder_needed = (stock <= min_t) or (post_stock <= crit_t)
+        trigger_type = "VEMA-Triggered" if (stock <= crit_t or post_stock <= 0) else "Auto-Generated" if reorder_needed else "None"
+        reorder_qty = int(item["reorder_quantity"]) if reorder_needed else 0
+
+        items_out.append({
+            "item_id": item["item_id"],
+            "name": item["name"],
+            "unit": item["unit"],
+            "category": cat,
+            "current_stock": stock,
+            "predicted_demand": pred_demand,
+            "status": st,
+            "reorder_needed": reorder_needed,
+            "reorder_quantity": reorder_qty,
+            "trigger_type": trigger_type,
+        })
+
+    return {
+        "date": target_date_str,
+        "season": season,
+        "model_loaded": MODEL_LOADED,
+        "total_predicted_demand": total_predicted,
+        "items": items_out,
+        "generated_at": datetime.utcnow().isoformat() + "Z"
+    }
+

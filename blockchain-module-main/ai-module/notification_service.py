@@ -6,6 +6,7 @@ via WebSocket in a future iteration.
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 import uuid
 
 
@@ -24,12 +25,12 @@ def create_notification(
     """Insert a notification row and return it as a dict."""
     nid = str(uuid.uuid4())
     db.execute(
-        """
+        text("""
         INSERT INTO notifications
           (id, user_id, category, title, description, metadata, created_at)
         VALUES
-          (:id, :user_id, :category, :title, :description, :metadata::jsonb, NOW())
-        """,
+          (:id, :user_id, :category, :title, :description, CAST(:metadata AS jsonb), NOW())
+        """),
         {
             "id":          nid,
             "user_id":     user_id,

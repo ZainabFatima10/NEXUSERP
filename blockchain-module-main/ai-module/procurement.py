@@ -157,8 +157,9 @@ def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
     delivery_date = req.expected_delivery or (
         datetime.now() + timedelta(days=14)
     ).strftime("%Y-%m-%d")
+    unit_price = req.unit_price if req.unit_price is not None else item.get("unit_price")
     total_price = (
-        round(req.quantity * req.unit_price, 2) if req.unit_price else None
+        round(req.quantity * unit_price, 2) if unit_price is not None else None
     )
 
     db.execute(
@@ -179,7 +180,7 @@ def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
             "id": order_id, "code": order_code,
             "item_id": req.item_id, "vendor_id": item["vendor_id"],
             "qty": req.quantity, "unit": item["unit"],
-            "unit_price": req.unit_price, "total_price": total_price,
+            "unit_price": unit_price, "total_price": total_price,
             "trigger": req.trigger_type, "triggered_by": req.triggered_by,
             "token": confirm_token, "delivery": delivery_date,
         },
@@ -352,7 +353,7 @@ def vendor_confirm(token: str, db: Session = Depends(get_db)):
               contract_status       = 'Signed',
               contract_hash         = :hash,
               contract_signed_at    = NOW(),
-              smart_contract_data   = :data::jsonb,
+              smart_contract_data   = CAST(:data AS jsonb),
               updated_at            = NOW()
             WHERE id = :id
         """),
@@ -369,7 +370,7 @@ def vendor_confirm(token: str, db: Session = Depends(get_db)):
             INSERT INTO contract_audit_log
               (id, order_id, action, tx_hash, block_number, payload, performed_at)
             VALUES
-              (:id, :oid, 'VendorConfirmed', :hash, :block, :payload::jsonb, NOW())
+              (:id, :oid, 'VendorConfirmed', :hash, :block, CAST(:payload AS jsonb), NOW())
         """),
         {
             "id":      str(uuid.uuid4()),
@@ -426,7 +427,7 @@ def operator_sign(order_id: str, req: SignContractRequest, db: Session = Depends
         text("""
             UPDATE procurement_orders SET
               contract_status   = :cs,
-              smart_contract_data = :data::jsonb,
+              smart_contract_data = CAST(:data AS jsonb),
               updated_at        = NOW()
             WHERE id = :id
         """),
@@ -436,7 +437,7 @@ def operator_sign(order_id: str, req: SignContractRequest, db: Session = Depends
         text("""
             INSERT INTO contract_audit_log
               (id, order_id, action, tx_hash, payload, performed_at)
-            VALUES (:id, :oid, :action, :hash, :payload::jsonb, NOW())
+            VALUES (:id, :oid, :action, :hash, CAST(:payload AS jsonb), NOW())
         """),
         {
             "id":      str(uuid.uuid4()),
@@ -499,7 +500,7 @@ def delivery_checkin(
     db.execute(
         text("""
             UPDATE procurement_orders SET
-              tracking_events = tracking_events || :evt::jsonb,
+              tracking_events = tracking_events || CAST(:evt AS jsonb),
               updated_at = NOW()
             WHERE id = :id
         """),
@@ -544,7 +545,7 @@ def delivery_checkin(
                     UPDATE procurement_orders SET
                       contract_status = 'Executed',
                       contract_executed_at = NOW(),
-                      smart_contract_data = :data::jsonb
+                      smart_contract_data = CAST(:data AS jsonb)
                     WHERE id = :id
                 """),
                 {"data": json.dumps(exec_result["contract_data"]), "id": order_id},
@@ -553,7 +554,7 @@ def delivery_checkin(
                 text("""
                     INSERT INTO contract_audit_log
                       (id, order_id, action, tx_hash, payload, performed_at)
-                    VALUES (:id, :oid, 'Executed', :hash, :payload::jsonb, NOW())
+                    VALUES (:id, :oid, 'Executed', :hash, CAST(:payload AS jsonb), NOW())
                 """),
                 {
                     "id":      str(uuid.uuid4()),
@@ -647,3 +648,31 @@ def manual_reorder(req: ManualReorderRequest, db: Session = Depends(get_db)):
         ),
         db,
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# INVOICE / BILLING
+# ────────────────────────────────────────────────────────────────────────────
+
+@router.get("/orders/{order_id}/invoice")
+def get_order_invoice(order_id: str, db: Session = Depends(get_db)):
+    from invoice_service import generate_invoice_data
+    order = _get_order(db, order_id)
+    return generate_invoice_data(order)
+
+
+@router.get("/orders/{order_id}/invoice/pdf")
+def get_order_invoice_pdf(order_id: str, db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    from invoice_service import generate_invoice_data, generate_invoice_pdf
+    order = _get_order(db, order_id)
+    invoice = generate_invoice_data(order)
+    pdf_bytes = generate_invoice_pdf(invoice)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=invoice-{order['order_code']}.pdf"
+        }
+    )
+
