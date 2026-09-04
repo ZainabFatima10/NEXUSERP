@@ -116,13 +116,14 @@ class ManualComplaintRequest(BaseModel):
 
 
 @router.post("/manual", dependencies=[_cr])
-def create_manual_complaint(req: ManualComplaintRequest, db: Session = Depends(get_db)):
+def create_manual_complaint(req: ManualComplaintRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     if req.subtype not in subtypes_for(req.category):
         raise HTTPException(400, f"'{req.subtype}' is not a valid subtype of '{req.category}'")
     result = vema_orchestrator.create_ticket(
         db, description=req.description, channel="manual", vema_triggered=False,
         customer_name=req.customer_name, customer_email=req.customer_email, area=req.area,
         override_category=req.category, override_subtype=req.subtype, override_severity=req.severity,
+        logged_by_actor=f"{user['role']}:{user['name']}",
     )
     return result
 
@@ -194,12 +195,12 @@ def update_complaint(ticket_id: str, req: UpdateComplaintRequest, user: dict = D
     if req.action == "resolve":
         if not req.resolution:
             raise HTTPException(400, "resolution is required to resolve a ticket")
-        code = vema_orchestrator.cr_resolve_ticket(db, ticket_id, req.resolution, user["id"])
+        code = vema_orchestrator.cr_resolve_ticket(db, ticket_id, req.resolution, user["id"], actor=f"{user['role']}:{user['name']}")
         if not code:
             raise HTTPException(404, "Ticket not found")
         return {"message": f"Ticket {code} marked resolved."}
     elif req.action == "escalate":
-        code = vema_orchestrator.cr_escalate_to_admin(db, ticket_id, user["id"], req.note or "")
+        code = vema_orchestrator.cr_escalate_to_admin(db, ticket_id, user["id"], req.note or "", actor=f"{user['role']}:{user['name']}")
         if not code:
             raise HTTPException(404, "Ticket not found")
         return {"message": f"Ticket {code} escalated to Admin."}

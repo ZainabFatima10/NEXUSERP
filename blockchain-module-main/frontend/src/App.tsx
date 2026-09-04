@@ -23,6 +23,7 @@ import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
 import ApprovalsQueue from "@/pages/procurement/ApprovalsQueue";
 import VendorCommunication from "@/pages/procurement/VendorCommunication";
 import CRDashboard from "@/pages/cr/CRDashboard";
+import TicketLog from "@/pages/cr/TicketLog";
 import CustomerPortal from "@/pages/portal/CustomerPortal";
 
 function App() {
@@ -63,6 +64,7 @@ function App() {
             <Route element={<ProtectedRoute allow={["customer_rep", "admin"]} />}>
               <Route path="/cr" element={<CRLayout />}>
                 <Route index element={<CRDashboard />} />
+                <Route path="tickets" element={<TicketLog />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
             </Route>

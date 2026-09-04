@@ -14,7 +14,6 @@ Preserves the existing two-path lifecycle's spirit (auto-resolve vs
 admin_pending) but extends it to three tiers as required.
 """
 import uuid
-from datetime import datetime, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -51,6 +50,7 @@ def create_ticket(
     override_category: Optional[str] = None,
     override_subtype: Optional[str] = None,
     override_severity: Optional[str] = None,
+    logged_by_actor: Optional[str] = None,  # for channel="manual" -- who logged it, e.g. "customer_rep:Sara Malik"
 ) -> dict:
     """
     Classifies the complaint, creates the ticket + first conversation event,
@@ -91,7 +91,7 @@ def create_ticket(
         },
     )
 
-    actor = "customer" if channel in ("voice", "chat") else "admin"
+    actor = "customer" if channel in ("voice", "chat") else (logged_by_actor or "admin")
     _log_event(db, ticket_id, "voice_transcript" if channel == "voice" else "chat_message", actor, description)
     _log_event(
         db, ticket_id, "system_action", "vema",
@@ -138,15 +138,18 @@ def _route_ticket(db: Session, ticket_id: str, ticket_code: str, severity: str, 
 
 def _escalate(db: Session, ticket_id: str, ticket_code: str, severity: str, reason: str, escalated_by: Optional[str] = None):
     interval = REMINDER_INTERVAL_MINUTES.get(severity, 30)
-    next_due = datetime.utcnow() + timedelta(minutes=interval)
+    # Compute "NOW() + N minutes" server-side rather than binding a Python
+    # datetime -- a naive datetime.utcnow() bound to a TIMESTAMPTZ column
+    # gets reinterpreted in the Postgres session's local timezone (e.g.
+    # Asia/Karachi, UTC+5), silently shifting the stored instant.
     db.execute(
         text("""
             UPDATE complaints SET
               status = 'escalated', escalated_at = NOW(), escalated_by = :by,
-              next_reminder_due = :due, updated_at = NOW()
+              next_reminder_due = NOW() + (:minutes * INTERVAL '1 minute'), updated_at = NOW()
             WHERE id = :id
         """),
-        {"by": escalated_by, "due": next_due, "id": ticket_id},
+        {"by": escalated_by, "minutes": interval, "id": ticket_id},
     )
     _log_event(db, ticket_id, "escalation", "vema" if not escalated_by else "admin", reason)
     db.commit()
@@ -159,7 +162,7 @@ def _escalate(db: Session, ticket_id: str, ticket_code: str, severity: str, reas
 
 
 def _resolve(db: Session, ticket_id: str, ticket_code: str, resolution: str, resolved_by: Optional[str],
-             customer_name: Optional[str], customer_email: Optional[str]):
+             customer_name: Optional[str], customer_email: Optional[str], actor: str = "vema"):
     status = "auto_resolved" if resolved_by is None else "resolved"
     db.execute(
         text("""
@@ -170,22 +173,22 @@ def _resolve(db: Session, ticket_id: str, ticket_code: str, resolution: str, res
         """),
         {"status": status, "by": resolved_by, "resolution": resolution, "id": ticket_id},
     )
-    _log_event(db, ticket_id, "resolution", "vema" if resolved_by is None else "admin", resolution)
+    _log_event(db, ticket_id, "resolution", actor, resolution)
     db.commit()
     if customer_email:
         send_customer_resolution_email(customer_email, customer_name or "Customer", ticket_code, resolution)
 
 
-def cr_resolve_ticket(db: Session, ticket_id: str, resolution: str, resolved_by_user_id: str):
+def cr_resolve_ticket(db: Session, ticket_id: str, resolution: str, resolved_by_user_id: str, actor: str = "customer_rep"):
     row = db.execute(text("SELECT * FROM complaints WHERE id = :id"), {"id": ticket_id}).mappings().first()
     if not row:
         return None
     _resolve(db, ticket_id, row["ticket_code"], resolution, resolved_by_user_id,
-              row["customer_name"], row["customer_email"])
+              row["customer_name"], row["customer_email"], actor=actor)
     return row["ticket_code"]
 
 
-def cr_escalate_to_admin(db: Session, ticket_id: str, escalated_by_user_id: str, note: str = ""):
+def cr_escalate_to_admin(db: Session, ticket_id: str, escalated_by_user_id: str, note: str = "", actor: str = "customer_rep"):
     row = db.execute(text("SELECT * FROM complaints WHERE id = :id"), {"id": ticket_id}).mappings().first()
     if not row:
         return None
@@ -193,7 +196,7 @@ def cr_escalate_to_admin(db: Session, ticket_id: str, escalated_by_user_id: str,
         text("UPDATE complaints SET escalated_by = :by, updated_at = NOW() WHERE id = :id"),
         {"by": escalated_by_user_id, "id": ticket_id},
     )
-    _log_event(db, ticket_id, "escalation", "admin", note or "Manually escalated to Admin by a Customer Representative.")
+    _log_event(db, ticket_id, "escalation", actor, note or "Manually escalated to Admin by a Customer Representative.")
     db.commit()
     notify_role(
         db, "admin", "User Complaints",

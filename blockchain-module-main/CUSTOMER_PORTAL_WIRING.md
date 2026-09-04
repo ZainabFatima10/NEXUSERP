@@ -41,12 +41,9 @@ Single interface combining:
   context), the mic button is hidden and chat still works — voice is an
   enhancement, not a hard requirement to use the portal.
 
-## What ships in the next pass
-
 The CR-side "entire conversation history" view and the reminder-cadence
-display live in the CR Dashboard (Section 6). This pass covers everything
-customer-facing plus the Admin-side read/resolve path (`Complaints.tsx`,
-wired in the VEMA pass).
+display shipped in the CR Dashboard pass (`src/pages/cr/CRDashboard.tsx`,
+`TicketLog.tsx`, `src/components/TicketDetailModal.tsx`).
 
 ## Manual verification performed
 

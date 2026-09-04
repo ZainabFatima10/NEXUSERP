@@ -9,7 +9,6 @@ beat). See VEMA_BACKEND_WIRING.md for why APScheduler was chosen over
 Celery beat.
 """
 import uuid
-from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from sqlalchemy import text
 
@@ -33,18 +32,18 @@ def check_and_fire_reminders():
 
         for row in due:
             interval = REMINDER_INTERVAL_MINUTES.get(row["severity"], 30)
-            next_due = datetime.utcnow() + timedelta(minutes=interval)
-
+            # Server-side "NOW() + N minutes" -- see vema_orchestrator._escalate()
+            # for why a Python-side datetime.utcnow() must not be bound here.
             db.execute(
                 text("""
                     UPDATE complaints SET
-                      next_reminder_due = :next_due,
+                      next_reminder_due = NOW() + (:minutes * INTERVAL '1 minute'),
                       reminder_count = reminder_count + 1,
                       last_reminded_at = NOW(),
                       updated_at = NOW()
                     WHERE id = :id
                 """),
-                {"next_due": next_due, "id": row["id"]},
+                {"minutes": interval, "id": row["id"]},
             )
             db.execute(
                 text("""

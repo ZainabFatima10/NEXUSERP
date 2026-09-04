@@ -168,6 +168,25 @@ KOKORO_VOICE=af_heart
 - `src/pages/Dashboard.tsx`'s "Unresolved Complaints" KPI and the "VEMA" system
   status badge now reflect real data instead of the mock seed / a hardcoded
   "In Development" label.
-- The actual voice/chat intake widget (Customer Portal) and the CR ticket-log
-  UI ship in the next two passes (Sections 5 and 6) — this pass wires the
-  data model, classification, routing, and the Admin-side read/resolve path.
+- The voice/chat intake widget shipped in the Customer Portal pass
+  (`CUSTOMER_PORTAL_WIRING.md`); the CR ticket-log/conversation-history UI
+  shipped in the CR Dashboard pass (`src/pages/cr/`).
+
+## Bugs found via live testing (fixed in this pass or the CR Dashboard pass)
+
+- **Timezone bug**: `_escalate()` and `reminder_scheduler.py` originally
+  computed `next_reminder_due` as `datetime.utcnow() + timedelta(...)` in
+  Python and bound that naive datetime to a `TIMESTAMPTZ` column. Postgres
+  reinterprets a naive value using the session's local timezone (this sandbox's
+  Postgres defaults to `Asia/Karachi`, UTC+5), shifting the stored instant 5
+  hours early — reminders showed as immediately overdue. Fixed by computing
+  `NOW() + (:minutes * INTERVAL '1 minute')` server-side instead of binding a
+  Python-computed timestamp. Caught by watching the CR Dashboard's "due in Nm"
+  badge show "due now" on a ticket that had just been escalated with a
+  30-minute cadence.
+- **Actor mislabeling**: `_resolve()`/`_escalate()`'s conversation-event
+  logging hardcoded the resolving/escalating actor as `"admin"` regardless of
+  which role actually took the action. Fixed by threading the real
+  `"{role}:{name}"` through from `complaints.py`'s endpoints. Caught by
+  resolving a ticket as the seeded `cr@nexus.pk` account and seeing the
+  conversation history attribute it to "admin".
