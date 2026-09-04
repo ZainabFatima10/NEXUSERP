@@ -40,8 +40,8 @@
 | Backend | FastAPI + Python 3.11 |
 | ML Models | XGBoost, scikit-learn |
 | Database | PostgreSQL 14 (Docker) + TimescaleDB |
-| Blockchain | Hyperledger Fabric (planned Iteration 2) |
-| Voice Agent | Whisper + Rasa + Google TTS (planned Iteration 3) |
+| Blockchain | Hyperledger Fabric (simulated) |
+| Voice Agent (VEMA) | Local Whisper (STT) + Local Kokoro (TTS) + Mistral API (NLU/conversation) |
 | Tunneling | Cloudflare Tunnel |
 
 ---
@@ -107,8 +107,8 @@ Full interactive docs available at: `http://localhost:8000/docs`
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/ayeshat157-rgb/nexus-erp.git
-cd nexus-erp/ai-module
+git clone https://github.com/ZainabFatima10/NEXUSERP.git
+cd NEXUSERP/blockchain-module-main/ai-module
 ```
 
 ### 2. Create virtual environment
@@ -182,9 +182,65 @@ cloudflared.exe tunnel --url http://localhost:8000
 |---|---|---|
 | AI Outage Forecasting | ✅ Complete | 1 |
 | Inventory Management | ✅ Complete | 1 |
-| Blockchain Procurement | 🔄 Planned | 2 |
-| VEMA Voice Agent | 🔄 Planned | 3 |
-| Notifications | 🔄 Planned | 2 |
+| Blockchain Procurement (simulated Hyperledger Fabric) | ✅ Complete | 2 |
+| Automated Reordering + Procurement Manager approval + n8n | ✅ Complete | 2 |
+| Role-Based Access Control (Admin / CR / Procurement Manager / Customer) | ✅ Complete | 2 |
+| VEMA Voice/Chat Agent (Whisper + Kokoro + Mistral) | ✅ Complete | 3 |
+| Customer Portal | ✅ Complete | 3 |
+| Notifications | ✅ Complete | 2 |
+
+See `RBAC_WIRING.md`, `N8N_AUTOMATION_WIRING.md`, `VEMA_BACKEND_WIRING.md`,
+and `CUSTOMER_PORTAL_WIRING.md` for how each of these is actually wired, and
+`CLAUDE.md` for a full map of the codebase.
+
+---
+
+## Test checklist
+
+Assumes the local dev setup from above is running (Postgres + `uvicorn` on
+:8000 + `npm run dev` on :5173).
+
+**Trigger a low-stock reorder locally**
+1. Log in as `admin@nexus.pk` / `nexus2026` → Inventory → **Run Inventory
+   Check**. Items at/below 20% of their minimum threshold (seeded: Copper
+   Conductors, Smart Meters) go to **Pending PM Approval**, not straight to
+   the vendor.
+2. Log in as `procurement@nexus.pk` / `nexus2026` → Procurement Manager
+   Dashboard → **Reorder Approvals** → Approve. Without `N8N_WEBHOOK_URL`
+   set, the backend console prints the vendor email payload including the
+   Accept/Reject URLs (dev mode).
+
+**Simulate a vendor Accept/Reject without live n8n**
+1. From the `uvicorn` console output after the approval above, copy the
+   `accept_url` or `reject_url` (`.../api/procurement/vendor-response/{id}
+   ?decision=...&token=...`).
+2. Paste it into a browser or `curl -X POST <url>` — no login required, it's
+   secured by the per-order token. Accept executes the smart contract and
+   notifies Admin + the Procurement Manager; Reject marks it declined.
+
+**Sign up as a customer and generate one ticket per severity tier**
+1. Go to `/signup` (or click **Customer Portal** on the marketing site) →
+   create an account → lands on `/portal`.
+2. Type each of these as a chat message and send:
+   - *Small*: "I never received my monthly electricity bill this cycle."
+   - *Medium*: "My electricity meter is faulty and not recording usage
+     properly, needs replacement."
+   - *Critical*: "There has been no electricity in my area since this
+     morning, complete outage."
+3. Small auto-resolves immediately. Medium attempts auto-resolution then
+   escalates. Critical escalates immediately with no auto-resolve attempt.
+   All three show up under **Your Tickets** with the right severity badge.
+
+**Log in as each of the three admin-side roles to confirm access boundaries**
+| Account | Password | Lands on | Should NOT be able to reach |
+|---|---|---|---|
+| `admin@nexus.pk` | `nexus2026` | `/admin` | — (full access) |
+| `cr@nexus.pk` | `nexus2026` | `/cr` | `/admin`, `/procurement` (redirects home) |
+| `procurement@nexus.pk` | `nexus2026` | `/procurement` | `/admin`, `/cr` (redirects home) |
+
+Confirm the redirect happens (not just a hidden nav link) by typing the
+disallowed URL directly into the address bar while logged in as CR or
+Procurement Manager.
 
 ---
 
