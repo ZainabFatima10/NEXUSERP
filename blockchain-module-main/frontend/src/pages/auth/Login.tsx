@@ -44,9 +44,10 @@ const Login = () => {
         </Link>
 
         <div className="glass-card p-7">
-          <h1 className="text-xl font-heading font-bold text-center">Admin Login</h1>
+          <h1 className="text-xl font-heading font-bold text-center">Login</h1>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6">
-            Sign in to manage inventory, forecasts, and complaints.
+            Staff and Customer Portal accounts sign in here — you'll land on the
+            right dashboard automatically.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

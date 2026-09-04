@@ -126,18 +126,25 @@ const Landing = () => {
 
             <motion.div variants={fadeUp} className="flex flex-col sm:flex-row items-center gap-3 mt-9">
               <Link
-                to="/login"
+                to="/signup"
                 className="w-full sm:w-auto px-6 py-3 rounded-lg bg-primary text-white text-sm font-semibold hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
               >
-                Admin Login <ArrowRight size={15} />
+                Customer Portal <ArrowRight size={15} />
               </Link>
-              <a
-                href="#how-it-works"
+              <Link
+                to="/login"
                 className="w-full sm:w-auto px-6 py-3 rounded-lg border border-white/15 text-white text-sm font-medium hover:bg-white/5 transition-colors text-center"
               >
-                See how it works
-              </a>
+                Staff Login
+              </Link>
             </motion.div>
+            <motion.a
+              variants={fadeUp}
+              href="#how-it-works"
+              className="inline-block mt-4 text-xs text-white/50 hover:text-white/80 transition-colors"
+            >
+              See how it works ↓
+            </motion.a>
           </motion.div>
 
           {/* Live-looking forecast strip — a preview of the actual product screen */}
@@ -361,14 +368,23 @@ const Landing = () => {
             Ready to see your grid from mission control?
           </h2>
           <p className="text-white/50 mt-4">
-            Sign in to the Admin portal to explore live inventory, forecasts, and complaint queues.
+            Customers can log a complaint by voice or chat in the Customer Portal; staff sign in
+            to explore live inventory, forecasts, and complaint queues.
           </p>
-          <Link
-            to="/login"
-            className="inline-flex items-center gap-2 mt-8 px-7 py-3 rounded-lg bg-primary text-white text-sm font-semibold hover:opacity-90 hover:scale-[1.03] active:scale-[0.98] transition-all"
-          >
-            Go to Admin Login <ArrowRight size={15} />
-          </Link>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-8">
+            <Link
+              to="/signup"
+              className="inline-flex items-center gap-2 px-7 py-3 rounded-lg bg-primary text-white text-sm font-semibold hover:opacity-90 hover:scale-[1.03] active:scale-[0.98] transition-all"
+            >
+              Customer Portal <ArrowRight size={15} />
+            </Link>
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-2 px-7 py-3 rounded-lg border border-white/15 text-white text-sm font-medium hover:bg-white/5 transition-colors"
+            >
+              Staff Login
+            </Link>
+          </div>
         </motion.div>
       </section>
 

@@ -72,13 +72,13 @@ const Navbar = () => {
 
           <div className="hidden md:flex items-center gap-3">
             <Link to="/login" className="text-sm text-white/80 hover:text-white transition-colors px-3 py-2">
-              Admin Login
+              Login
             </Link>
             <Link
               to="/signup"
               className="text-sm font-medium px-4 py-2 rounded-lg bg-primary text-white hover:opacity-90 transition-opacity"
             >
-              Request Access
+              Customer Portal
             </Link>
           </div>
 
@@ -105,10 +105,10 @@ const Navbar = () => {
             ))}
             <div className="flex gap-3 pt-2">
               <Link to="/login" className="flex-1 text-center text-sm text-white/90 border border-white/20 rounded-lg py-2">
-                Admin Login
+                Login
               </Link>
               <Link to="/signup" className="flex-1 text-center text-sm bg-primary text-white rounded-lg py-2">
-                Request Access
+                Customer Portal
               </Link>
             </div>
           </div>
