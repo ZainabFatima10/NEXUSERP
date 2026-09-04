@@ -4,6 +4,8 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ToastProvider } from "@/hooks/use-toast";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import AdminLayout from "@/layouts/AdminLayout";
+import ProcurementLayout from "@/layouts/ProcurementLayout";
+import CRLayout from "@/layouts/CRLayout";
 
 import Landing from "@/pages/marketing/Landing";
 import Login from "@/pages/auth/Login";
@@ -17,6 +19,10 @@ import Complaints from "@/pages/Complaints";
 import Notifications from "@/pages/Notifications";
 import NotFound from "@/pages/NotFound";
 
+import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
+import CRDashboard from "@/pages/cr/CRDashboard";
+import CustomerPortal from "@/pages/portal/CustomerPortal";
+
 function App() {
   return (
     <BrowserRouter>
@@ -28,8 +34,8 @@ function App() {
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
 
-            {/* Protected admin app */}
-            <Route element={<ProtectedRoute />}>
+            {/* Admin — full access to every module */}
+            <Route element={<ProtectedRoute allow={["admin"]} />}>
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<Dashboard />} />
                 <Route path="inventory" element={<Inventory />} />
@@ -39,6 +45,25 @@ function App() {
                 <Route path="complaints" element={<Complaints />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
+            </Route>
+
+            {/* Procurement Manager */}
+            <Route element={<ProtectedRoute allow={["procurement_manager", "admin"]} />}>
+              <Route path="/procurement" element={<ProcurementLayout />}>
+                <Route index element={<ProcurementDashboard />} />
+              </Route>
+            </Route>
+
+            {/* Customer Representative */}
+            <Route element={<ProtectedRoute allow={["customer_rep", "admin"]} />}>
+              <Route path="/cr" element={<CRLayout />}>
+                <Route index element={<CRDashboard />} />
+              </Route>
+            </Route>
+
+            {/* Customer Portal */}
+            <Route element={<ProtectedRoute allow={["customer"]} />}>
+              <Route path="/portal" element={<CustomerPortal />} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

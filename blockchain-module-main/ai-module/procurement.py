@@ -37,8 +37,10 @@ from notification_service import (
     notify_contract_signed,
     notify_delivery_checkin,
 )
+from rbac import require_role, ROLE_PROCUREMENT_MANAGER
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
+_pm = Depends(require_role(ROLE_PROCUREMENT_MANAGER))
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ def _order_to_dict(row: dict) -> dict:
 # CREATE ORDER
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/orders")
+@router.post("/orders", dependencies=[_pm])
 def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
     item = _get_item(db, req.item_id)
     if not item.get("vendor_name"):
@@ -224,7 +226,7 @@ def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
 # LIST ORDERS
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/orders")
+@router.get("/orders", dependencies=[_pm])
 def list_orders(
     stage:   Optional[str] = Query(None),
     item_id: Optional[str] = Query(None),
@@ -272,7 +274,7 @@ def list_orders(
 # ORDER DETAIL
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/orders/{order_id}")
+@router.get("/orders/{order_id}", dependencies=[_pm])
 def get_order(order_id: str, db: Session = Depends(get_db)):
     order = _get_order(db, order_id)
     checkins = db.execute(
@@ -404,7 +406,7 @@ def vendor_confirm(token: str, db: Session = Depends(get_db)):
 # OPERATOR SIGNS CONTRACT
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/sign/{order_id}")
+@router.post("/sign/{order_id}", dependencies=[_pm])
 def operator_sign(order_id: str, req: SignContractRequest, db: Session = Depends(get_db)):
     order = _get_order(db, order_id)
     if not order.get("contract_hash"):
@@ -459,7 +461,7 @@ def operator_sign(order_id: str, req: SignContractRequest, db: Session = Depends
 # DELIVERY CHECK-IN
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/checkin/{order_id}")
+@router.post("/checkin/{order_id}", dependencies=[_pm])
 def delivery_checkin(
     order_id: str,
     req: DeliveryCheckinRequest,
@@ -620,7 +622,7 @@ def delivery_checkin(
 # GET CHECK-INS FOR AN ORDER
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/checkins/{order_id}")
+@router.get("/checkins/{order_id}", dependencies=[_pm])
 def get_checkins(order_id: str, db: Session = Depends(get_db)):
     rows = db.execute(
         text("""
@@ -636,7 +638,7 @@ def get_checkins(order_id: str, db: Session = Depends(get_db)):
 # MANUAL REORDER (quick path)
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/manual-reorder")
+@router.post("/manual-reorder", dependencies=[_pm])
 def manual_reorder(req: ManualReorderRequest, db: Session = Depends(get_db)):
     item = _get_item(db, req.item_id)
     return create_order(
@@ -654,14 +656,14 @@ def manual_reorder(req: ManualReorderRequest, db: Session = Depends(get_db)):
 # INVOICE / BILLING
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/orders/{order_id}/invoice")
+@router.get("/orders/{order_id}/invoice", dependencies=[_pm])
 def get_order_invoice(order_id: str, db: Session = Depends(get_db)):
     from invoice_service import generate_invoice_data
     order = _get_order(db, order_id)
     return generate_invoice_data(order)
 
 
-@router.get("/orders/{order_id}/invoice/pdf")
+@router.get("/orders/{order_id}/invoice/pdf", dependencies=[_pm])
 def get_order_invoice_pdf(order_id: str, db: Session = Depends(get_db)):
     from fastapi.responses import Response
     from invoice_service import generate_invoice_data, generate_invoice_pdf

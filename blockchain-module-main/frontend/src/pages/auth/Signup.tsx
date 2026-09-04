@@ -5,15 +5,16 @@ import { UserPlus, Loader2 } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
 
-const ROLES = ["Admin", "Procurement Officer", "System Operator", "Operator"];
-
+// Public self-signup only ever creates a Customer Portal account — admin-side
+// roles (Admin / Customer Rep / Procurement Manager) are provisioned by an
+// existing Admin via POST /api/auth/admin-create-user, not this form. See
+// RBAC_WIRING.md.
 const Signup = () => {
   const { signup, loading } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("Admin");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,8 +31,8 @@ const Signup = () => {
       return;
     }
     try {
-      await signup(name, email, password, role);
-      navigate("/admin", { replace: true });
+      await signup(name, email, password);
+      navigate("/portal", { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not create account");
     }
@@ -51,9 +52,10 @@ const Signup = () => {
         </Link>
 
         <div className="glass-card p-7">
-          <h1 className="text-xl font-heading font-bold text-center">Create Account</h1>
+          <h1 className="text-xl font-heading font-bold text-center">Create Your Customer Account</h1>
           <p className="text-sm text-muted-foreground text-center mt-1 mb-6">
-            Accounts are provisioned by the operating DISCO's administrator.
+            Log complaints by voice or chat and track them here. Staff accounts are
+            provisioned by your DISCO's administrator, not this form.
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -78,21 +80,6 @@ const Signup = () => {
                 placeholder="john@nexus.com"
                 className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
               />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Role</label>
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
-              >
-                {ROLES.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div>

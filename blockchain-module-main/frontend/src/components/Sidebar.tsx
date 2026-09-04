@@ -4,17 +4,27 @@ import {
   LayoutDashboard, Package, CloudLightning, MessageSquare,
   Bell, ChevronLeft, ChevronRight, LogOut, TrendingUp, ShoppingCart,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { LogoMark } from "@/components/Logo";
+
+export interface NavItem {
+  to: string;
+  label: string;
+  icon: LucideIcon;
+  end?: boolean;
+}
 
 interface Props {
   collapsed: boolean;
   onToggle: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  navItems?: NavItem[];
+  brandSubtitle?: string;
 }
 
-const NAV_ITEMS = [
+export const ADMIN_NAV_ITEMS: NavItem[] = [
   { to: "/admin", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/admin/inventory", label: "Inventory", icon: Package },
   { to: "/admin/demand-prediction", label: "Demand Prediction", icon: TrendingUp },
@@ -24,7 +34,14 @@ const NAV_ITEMS = [
   { to: "/admin/notifications", label: "Notifications", icon: Bell },
 ];
 
-const Sidebar = ({ collapsed, onToggle, mobileOpen, onCloseMobile }: Props) => {
+const Sidebar = ({
+  collapsed,
+  onToggle,
+  mobileOpen,
+  onCloseMobile,
+  navItems = ADMIN_NAV_ITEMS,
+  brandSubtitle = "PowerGrid Optimizer",
+}: Props) => {
   const { logout } = useAuth();
 
   const content = (
@@ -35,14 +52,14 @@ const Sidebar = ({ collapsed, onToggle, mobileOpen, onCloseMobile }: Props) => {
         {!collapsed && (
           <div className="min-w-0">
             <p className="text-sm font-heading font-bold leading-tight truncate">NEXUS ERP</p>
-            <p className="text-[10px] text-sidebar-muted leading-tight truncate">PowerGrid Optimizer</p>
+            <p className="text-[10px] text-sidebar-muted leading-tight truncate">{brandSubtitle}</p>
           </div>
         )}
       </div>
 
       {/* Nav */}
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto scroll-thin">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

@@ -55,15 +55,10 @@ export const loginUser = (email: string, password: string) =>
     body: JSON.stringify({ email, password }),
   });
 
-export const signupUser = (
-  name: string,
-  email: string,
-  password: string,
-  role: string
-) =>
+export const signupUser = (name: string, email: string, password: string) =>
   apiFetch<{ message: string; user_id: string }>("/api/auth/signup", {
     method: "POST",
-    body: JSON.stringify({ name, email, password, role }),
+    body: JSON.stringify({ name, email, password }),
   });
 
 // ═══════════════════════════════════════════════════════════════════════════════

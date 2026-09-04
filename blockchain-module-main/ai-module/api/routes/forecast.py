@@ -10,7 +10,11 @@ ai_module_dir = os.path.dirname(os.path.dirname(current_dir))
 if ai_module_dir not in sys.path:
     sys.path.insert(0, ai_module_dir)
 
+from fastapi import Depends
+from rbac import require_role
+
 router = APIRouter()
+_admin = Depends(require_role())
 
 BASE_DIR = ai_module_dir
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
@@ -98,7 +102,7 @@ def get_actions(risk: str):
         return ["Routine monitoring"]
 
 
-@router.get("/forecast")
+@router.get("/forecast", dependencies=[_admin])
 def get_forecast():
     forecast    = []
     today       = datetime.today()
@@ -168,7 +172,7 @@ def get_forecast():
     }
 
 
-@router.get("/forecast/{date}")
+@router.get("/forecast/{date}", dependencies=[_admin])
 def get_forecast_detail(date: str):
     forecasts = get_forecast()["forecast"]
     for day in forecasts:

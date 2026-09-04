@@ -4,12 +4,13 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Eye, EyeOff, LogIn, Loader2 } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
+import { ROLE_HOME } from "@/components/ProtectedRoute";
 
 const Login = () => {
   const { login, loading } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from || "/admin";
+  const from = (location.state as { from?: string } | null)?.from;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,8 +22,8 @@ const Login = () => {
     e.preventDefault();
     setError(null);
     try {
-      await login(email, password);
-      navigate(from, { replace: true });
+      const user = await login(email, password);
+      navigate(from || ROLE_HOME[user.role] || "/admin", { replace: true });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Invalid credentials");
     }

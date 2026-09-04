@@ -10,8 +10,8 @@ interface AuthContextValue {
   token: string | null;
   loading: boolean;
   initializing: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string, role: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<AuthUser>;
+  signup: (name: string, email: string, password: string) => Promise<AuthUser>;
   logout: () => void;
 }
 
@@ -20,8 +20,8 @@ const AuthContext = createContext<AuthContextValue>({
   token: null,
   loading: false,
   initializing: true,
-  login: async () => {},
-  signup: async () => {},
+  login: async () => { throw new Error("AuthProvider not mounted"); },
+  signup: async () => { throw new Error("AuthProvider not mounted"); },
   logout: () => {},
 });
 
@@ -55,16 +55,17 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setToken(res.token);
       localStorage.setItem(STORAGE_USER, JSON.stringify(res.user));
       localStorage.setItem(STORAGE_TOKEN, res.token);
+      return res.user;
     } finally {
       setLoading(false);
     }
   };
 
-  const signup = async (name: string, email: string, password: string, role: string) => {
+  const signup = async (name: string, email: string, password: string) => {
     setLoading(true);
     try {
-      await signupUser(name, email, password, role);
-      await login(email, password);
+      await signupUser(name, email, password);
+      return await login(email, password);
     } finally {
       setLoading(false);
     }

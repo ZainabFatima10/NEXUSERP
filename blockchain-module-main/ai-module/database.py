@@ -57,26 +57,43 @@ def db_session():
         db.close()
 
 
-def run_schema(sql_path: str = None):
-    """Run the SQL schema file to initialise / migrate tables."""
-    import pathlib
-    if sql_path is None:
-        here = pathlib.Path(__file__).parent
-        sql_path = here / "001_schema.sql"
+def _apply_sql_file(conn, sql_path) -> None:
     with open(sql_path) as f:
         sql = f.read()
+    # Execute statement-by-statement to avoid multi-statement issues
+    for statement in sql.split(";"):
+        stmt = statement.strip()
+        if stmt:
+            try:
+                conn.execute(text(stmt))
+            except Exception as e:
+                # Skip "already exists" / already-applied errors on re-run
+                if "already exists" not in str(e).lower():
+                    raise
+
+
+def run_schema(sql_path: str = None):
+    """
+    Run the base schema, then every numbered migration file (NNN_*.sql,
+    NNN > 001) in ascending order. Every migration is written to be
+    idempotent (IF NOT EXISTS / ON CONFLICT / DROP-then-ADD constraint),
+    so re-running this on every startup is safe.
+    """
+    import pathlib
+    here = pathlib.Path(__file__).parent
+    base = pathlib.Path(sql_path) if sql_path else (here / "001_schema.sql")
+
+    migrations = sorted(
+        p for p in here.glob("[0-9][0-9][0-9]_*.sql") if p.name != base.name
+    )
+
     with engine.connect() as conn:
-        # Execute statement-by-statement to avoid multi-statement issues
-        for statement in sql.split(";"):
-            stmt = statement.strip()
-            if stmt:
-                try:
-                    conn.execute(text(stmt))
-                except Exception as e:
-                    # Skip "already exists" errors on re-run
-                    if "already exists" not in str(e).lower():
-                        raise
+        _apply_sql_file(conn, base)
         conn.commit()
+        for migration in migrations:
+            _apply_sql_file(conn, migration)
+            conn.commit()
+            print(f"[OK] Migration applied: {migration.name}")
     print("[OK] Schema applied successfully.")
 
 

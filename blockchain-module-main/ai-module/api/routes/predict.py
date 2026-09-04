@@ -9,7 +9,11 @@ ai_module_dir = os.path.dirname(os.path.dirname(current_dir))
 if ai_module_dir not in sys.path:
     sys.path.insert(0, ai_module_dir)
 
+from fastapi import Depends
+from rbac import require_role
+
 router = APIRouter()
+_admin = Depends(require_role())
 
 BASE = os.path.join(ai_module_dir, "models", "saved")
 try:
@@ -58,7 +62,7 @@ def safe_encode(encoder, value, default=0):
     except:
         return default
 
-@router.post("/predict")
+@router.post("/predict", dependencies=[_admin])
 def predict_demand(req: PredictionRequest):
     date  = datetime.strptime(req.Date, "%Y-%m-%d")
     month = date.month

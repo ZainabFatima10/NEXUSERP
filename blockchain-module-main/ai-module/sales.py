@@ -6,10 +6,12 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import get_db
+from rbac import require_role
 
 router = APIRouter(prefix="/sales", tags=["Sales Analytics"])
+_admin = Depends(require_role())
 
-@router.get("/summary")
+@router.get("/summary", dependencies=[_admin])
 def get_sales_summary(db: Session = Depends(get_db)):
     inv_count = db.execute(text("SELECT COUNT(*) FROM inventory_items")).scalar() or 0
     total_demand = db.execute(text("SELECT COALESCE(SUM(current_stock), 0) FROM inventory_items")).scalar() or 0
@@ -24,7 +26,7 @@ def get_sales_summary(db: Session = Depends(get_db)):
         "total_promotions": total_orders
     }
 
-@router.get("/by-category")
+@router.get("/by-category", dependencies=[_admin])
 def get_sales_by_category(db: Session = Depends(get_db)):
     rows = db.execute(text("""
         SELECT category AS "Category",
@@ -36,7 +38,7 @@ def get_sales_by_category(db: Session = Depends(get_db)):
     """)).mappings().all()
     return {"data": [dict(r) for r in rows]}
 
-@router.get("/by-region")
+@router.get("/by-region", dependencies=[_admin])
 def get_sales_by_region():
     return {
         "data": [
@@ -47,7 +49,7 @@ def get_sales_by_region():
         ]
     }
 
-@router.get("/trend")
+@router.get("/trend", dependencies=[_admin])
 def get_sales_trend(group_by: str = Query("month")):
     return {
         "group_by": group_by,
@@ -59,7 +61,7 @@ def get_sales_trend(group_by: str = Query("month")):
         ]
     }
 
-@router.get("/inventory-status")
+@router.get("/inventory-status", dependencies=[_admin])
 def get_inventory_status(db: Session = Depends(get_db)):
     rows = db.execute(text("""
         SELECT category AS "Category",

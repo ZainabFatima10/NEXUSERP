@@ -12,8 +12,11 @@ from sqlalchemy import text
 
 from database import get_db
 from notification_service import notify_stock_critical, notify_stock_low, notify_out_of_stock
+from rbac import require_role, ROLE_PROCUREMENT_MANAGER
 
 router = APIRouter(prefix="/api/inventory", tags=["Inventory"])
+_pm_read = Depends(require_role(ROLE_PROCUREMENT_MANAGER))
+_admin_only = Depends(require_role())
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -92,7 +95,7 @@ def _enrich_item(row: dict) -> dict:
 # GET /overview
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/overview")
+@router.get("/overview", dependencies=[_pm_read])
 def inventory_overview(db: Session = Depends(get_db)):
     rows = db.execute(
         text("""
@@ -119,7 +122,7 @@ def inventory_overview(db: Session = Depends(get_db)):
 # GET /item/{item_id}
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/item/{item_id}")
+@router.get("/item/{item_id}", dependencies=[_pm_read])
 def get_item(item_id: str, db: Session = Depends(get_db)):
     row = db.execute(
         text("""
@@ -139,7 +142,7 @@ def get_item(item_id: str, db: Session = Depends(get_db)):
 # POST /check — scan all items and auto-generate orders for Low/Critical
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/check")
+@router.post("/check", dependencies=[_pm_read])
 def run_inventory_check(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -235,7 +238,7 @@ class StockUpdateRequest(BaseModel):
     notes:         Optional[str] = None
 
 
-@router.put("/item/{item_id}/stock")
+@router.put("/item/{item_id}/stock", dependencies=[_admin_only])
 def update_stock(item_id: str, req: StockUpdateRequest, db: Session = Depends(get_db)):
     row = db.execute(
         text("SELECT * FROM inventory_items WHERE item_id=:id"), {"id": item_id}
@@ -263,7 +266,7 @@ def update_stock(item_id: str, req: StockUpdateRequest, db: Session = Depends(ge
 # POST /predict-inventory — read all DB items and run the prediction model
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/predict-inventory")
+@router.post("/predict-inventory", dependencies=[_pm_read])
 def batch_predict_inventory(db: Session = Depends(get_db)):
     """
     Reads all inventory items from the database and runs them through the 
@@ -328,7 +331,7 @@ def batch_predict_inventory(db: Session = Depends(get_db)):
 # GET /demand-forecast — forecast per-item demand on a specific date
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.get("/demand-forecast")
+@router.get("/demand-forecast", dependencies=[_pm_read])
 def get_demand_forecast(date: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Runs each inventory item through the prediction model for a given date.

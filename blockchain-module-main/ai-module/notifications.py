@@ -5,11 +5,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import get_db
+from rbac import require_role, ROLE_CUSTOMER_REP, ROLE_PROCUREMENT_MANAGER
 
 router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
+_staff = Depends(require_role(ROLE_CUSTOMER_REP, ROLE_PROCUREMENT_MANAGER))
 
 
-@router.get("")
+@router.get("", dependencies=[_staff])
 def get_notifications(
     user_id:  str  = Query(None),
     unread:   bool = Query(False),
@@ -47,7 +49,7 @@ def get_notifications(
     }
 
 
-@router.patch("/{notif_id}/read")
+@router.patch("/{notif_id}/read", dependencies=[_staff])
 def mark_read(notif_id: str, db: Session = Depends(get_db)):
     db.execute(
         text("UPDATE notifications SET is_read=TRUE WHERE id=:id"),
@@ -57,7 +59,7 @@ def mark_read(notif_id: str, db: Session = Depends(get_db)):
     return {"message": "Marked as read"}
 
 
-@router.patch("/mark-all-read")
+@router.patch("/mark-all-read", dependencies=[_staff])
 def mark_all_read(user_id: str = Query(None), db: Session = Depends(get_db)):
     db.execute(
         text("UPDATE notifications SET is_read=TRUE WHERE user_id=:uid OR user_id IS NULL"),
