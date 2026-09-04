@@ -214,6 +214,39 @@ def send_delivery_notification_email(
     )
 
 
+def send_customer_resolution_email(
+    customer_email: str,
+    customer_name: str,
+    ticket_code: str,
+    resolution: str,
+) -> bool:
+    """VEMA (Section 5c): 'Your ticket has been resolved.' -- sent on any tier's resolution."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#2e7d5e;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Your ticket has been resolved</h2>
+        <p style="color:rgba(255,255,255,0.85);margin:4px 0 0;font-size:13px;">NEXUS ERP · Customer Support</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{customer_name}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          Your ticket <b>{ticket_code}</b> has been resolved. Summary:
+        </p>
+        <div style="background:#f0f4fb;border-radius:8px;padding:16px;margin:16px 0;color:#333;">
+          {resolution}
+        </div>
+        <p style="color:#888;font-size:12px;">
+          If this doesn't fully address your concern, reply to this email or log a new
+          ticket from the Customer Portal and reference {ticket_code}.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(customer_email, f"Ticket {ticket_code} Resolved — NEXUS ERP", html)
+
+
 def send_internal_notification_email(
     to_email: str,
     subject: str,

@@ -440,6 +440,111 @@ export const getForecastByDate = (date: string) =>
   apiFetch<ForecastDay>(`/api/forecast/${date}`);
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// VEMA COMPLAINTS (Section 4/5/6)
+// ═══════════════════════════════════════════════════════════════════════════════
+export type ComplaintSeverity = "small" | "medium" | "critical";
+export type ComplaintStatus = "open" | "auto_resolved" | "escalated" | "resolved";
+export type ComplaintChannel = "voice" | "chat" | "manual";
+
+export interface Complaint {
+  id: string;
+  ticket_code: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  channel: ComplaintChannel;
+  category: string;
+  subtype: string;
+  severity: ComplaintSeverity;
+  description: string;
+  area: string | null;
+  status: ComplaintStatus;
+  vema_triggered: boolean;
+  assigned_cr: string | null;
+  escalated_at: string | null;
+  resolved_at: string | null;
+  resolution: string | null;
+  next_reminder_due: string | null;
+  reminder_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComplaintEvent {
+  id: string;
+  complaint_id: string;
+  event_type: "voice_transcript" | "chat_message" | "system_action" | "escalation" | "reminder" | "resolution";
+  actor: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export const getComplaints = (params?: { status?: string; category?: string; severity?: string; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.status) q.set("status", params.status);
+  if (params?.category) q.set("category", params.category);
+  if (params?.severity) q.set("severity", params.severity);
+  if (params?.limit) q.set("limit", String(params.limit));
+  return apiFetch<{ total: number; tickets: Complaint[] }>(`/api/complaints?${q}`);
+};
+
+export const getMyComplaints = () => apiFetch<{ tickets: Complaint[] }>("/api/complaints/mine");
+
+export const getComplaint = (id: string) =>
+  apiFetch<{ ticket: Complaint; events: ComplaintEvent[] }>(`/api/complaints/${id}`);
+
+export const resolveComplaint = (id: string, resolution: string) =>
+  apiFetch<{ message: string }>(`/api/complaints/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action: "resolve", resolution }),
+  });
+
+export const escalateComplaint = (id: string, note?: string) =>
+  apiFetch<{ message: string }>(`/api/complaints/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ action: "escalate", note }),
+  });
+
+export const submitChatComplaint = (message: string, area?: string) =>
+  apiFetch<{ ticket_code: string; ticket_id: string; classification: Record<string, unknown>; status: string; reply_text: string }>(
+    "/api/complaints/chat",
+    { method: "POST", body: JSON.stringify({ message, area }) }
+  );
+
+export const submitVoiceComplaint = async (audioBlob: Blob, area?: string) => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
+  const form = new FormData();
+  form.append("audio", audioBlob, "recording.webm");
+  if (area) form.append("area", area);
+  const res = await fetch(`${API_BASE_URL}/api/complaints/voice`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `API error ${res.status}`);
+  }
+  return res.json() as Promise<{
+    ticket_code: string; ticket_id: string; transcript: string; transcription_engine: string;
+    classification: Record<string, unknown>; status: string; reply_text: string;
+    reply_audio_base64: string | null; reply_audio_available: boolean;
+  }>;
+};
+
+export const getComplaintTaxonomy = () => apiFetch<Record<string, string[]>>("/api/complaints/taxonomy");
+
+export const createManualComplaint = (payload: {
+  description: string; category: string; subtype: string; severity?: string;
+  customer_name?: string; customer_email?: string; area?: string;
+}) =>
+  apiFetch<{ ticket_id: string; ticket_code: string; status: string }>("/api/complaints/manual", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD ANALYTICS (Module 1 — unchanged)
 // ═══════════════════════════════════════════════════════════════════════════════
 export interface SalesSummary { total_records: number; total_demand: number; avg_price: number; total_units_sold: number; total_promotions: number; }

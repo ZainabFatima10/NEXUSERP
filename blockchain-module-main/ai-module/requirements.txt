@@ -30,3 +30,14 @@ pydantic[email]==2.7.1
 httpx==0.27.0
 
 # Optional: TimescaleDB (same driver, no extra package needed)
+
+# VEMA (Section 4/5) — reorder/vendor workflow + complaint ticketing
+apscheduler==3.10.4
+reportlab==4.2.2
+python-multipart==0.0.9   # required by FastAPI for UploadFile/Form (voice complaint intake)
+# STT/TTS are heavy (torch, ffmpeg, onnx) and optional — stt_service.py /
+# tts_service.py fall back to a text-only placeholder if these aren't
+# installed, so they're not required to run the rest of the app.
+# openai-whisper==20231117
+# kokoro>=0.7.0
+# soundfile==0.12.1

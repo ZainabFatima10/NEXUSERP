@@ -19,8 +19,10 @@ from procurement   import router as procurement_router
 from notifications import router as notifications_router
 from auth          import router as auth_router
 from sales         import router as sales_router
+from complaints    import router as complaints_router
 
 from database import check_connection, run_schema
+from reminder_scheduler import start_scheduler, stop_scheduler
 
 app = FastAPI(
     title="NEXUS ERP — PowerGrid Optimizer",
@@ -44,6 +46,7 @@ app.include_router(procurement_router)
 app.include_router(notifications_router)
 app.include_router(auth_router)
 app.include_router(sales_router)
+app.include_router(complaints_router)
 
 
 @app.on_event("startup")
@@ -54,6 +57,12 @@ def on_startup():
         print("[OK] DB schema verified.")
     except Exception as e:
         print(f"[WARN] Schema migration warning: {e}")
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_scheduler()
 
 
 @app.get("/health")

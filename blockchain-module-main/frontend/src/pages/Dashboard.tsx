@@ -5,8 +5,7 @@ import {
   Package, ClipboardList, AlertTriangle, ShieldAlert, ArrowRight,
   Mic, Radio, Cpu, Loader2, CloudLightning, MessageSquare, Bell,
 } from "lucide-react";
-import { getInventoryOverview, listOrders, getOutageForecast } from "@/services/api";
-import { SEED_COMPLAINTS } from "@/data/mockComplaints";
+import { getInventoryOverview, listOrders, getOutageForecast, getComplaints } from "@/services/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface Kpi {
@@ -53,10 +52,11 @@ const Dashboard = () => {
 
     (async () => {
       try {
-        const [inv, orders, forecast] = await Promise.allSettled([
+        const [inv, orders, forecast, complaints] = await Promise.allSettled([
           getInventoryOverview(),
           listOrders({ limit: 200 }),
           getOutageForecast(),
+          getComplaints({ limit: 200 }),
         ]);
 
         const totalItems = inv.status === "fulfilled" ? inv.value.summary.total_items : 0;
@@ -68,7 +68,10 @@ const Dashboard = () => {
           forecast.status === "fulfilled" && forecast.value.forecast.length > 0
             ? Math.round(forecast.value.forecast[0].outage_probability)
             : null;
-        const unresolvedComplaints = SEED_COMPLAINTS.filter((c) => !c.resolved).length;
+        const unresolvedComplaints =
+          complaints.status === "fulfilled"
+            ? complaints.value.tickets.filter((c) => c.status === "open" || c.status === "escalated").length
+            : 0;
 
         if (!cancelled) {
           setKpis([
@@ -161,7 +164,7 @@ const Dashboard = () => {
           <div className="flex items-center gap-2 text-sm">
             <Mic size={15} className="text-muted-foreground" />
             <span className="text-muted-foreground">VEMA</span>
-            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">In Development</span>
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">Active</span>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <Radio size={15} className="text-muted-foreground" />

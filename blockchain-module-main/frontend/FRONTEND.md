@@ -12,7 +12,7 @@ Marketing site + Admin portal for the NEXUS ERP PowerGrid Optimizer, built with 
   - `/admin/demand-prediction` — pick a date, forecast per-item demand with the trained model (`GET /api/inventory/demand-forecast`), jump straight into Procurement to reorder any flagged item
   - `/admin/procurement` — place blockchain-verified purchase orders (smart contracts), track active/delivered orders, and pull up **billing/invoices** (see below) for any order
   - `/admin/outage-prediction` — 7-day AI outage forecast with drill-down detail per day
-  - `/admin/complaints` — User complaints (VEMA). **Running on local demo data** — the backend for this module isn't built yet (see note below).
+  - `/admin/complaints` — User complaints (VEMA) — live data from `/api/complaints`, with a "VEMA-Triggered" badge on voice/chat-originated tickets. See `VEMA_BACKEND_WIRING.md`.
   - `/admin/notifications` — consolidated notification feed
 
 ## Running locally
@@ -32,10 +32,14 @@ npm run preview   # preview the production build locally
 
 ## A note on the Complaints module
 
-The FYP report describes a VEMA (Voice & Email Management Agent) pipeline — Whisper for transcription, Rasa for intent handling, auto-ticketing — as a planned module. That backend doesn't exist in this repo yet (no `/api/complaints` routes). The `/admin/complaints` screen is fully built and interactive against seed data in `src/data/mockComplaints.ts` so the UI/UX is demoable end-to-end. Once the VEMA backend ships:
-
-1. Add the matching functions to `src/services/api.ts` (list complaints, resolve, escalate — following the same pattern as the other modules there).
-2. Swap the `SEED_COMPLAINTS` import in `src/pages/Complaints.tsx` for real API calls (the component's local state/handlers are already shaped to drop straight in).
+The VEMA (Voice & Email Management Agent) pipeline — local Whisper STT, local
+Kokoro TTS, Mistral LLM for classification/conversation — is implemented in
+`ai-module/` (`stt_service.py`, `tts_service.py`, `llm_service.py`,
+`vema_orchestrator.py`, `complaints.py`, `reminder_scheduler.py`). The
+`/admin/complaints` screen (and the Customer Portal / CR Dashboard screens)
+run on live data from `/api/complaints`. `src/data/mockComplaints.ts` has been
+removed. See `VEMA_BACKEND_WIRING.md` for the full pipeline, taxonomy, and
+severity/reminder routing.
 
 ## Billing / procurement invoices
 
