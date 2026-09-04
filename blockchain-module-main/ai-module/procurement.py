@@ -10,7 +10,7 @@ Covers the full order lifecycle:
   GET  /procurement/checkins/{id}   — all check-ins for an order
   POST /procurement/manual-reorder  — manual reorder trigger
 """
-import uuid, json
+import os, secrets, uuid, json
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -36,11 +36,15 @@ from notification_service import (
     notify_vendor_confirmed,
     notify_contract_signed,
     notify_delivery_checkin,
+    notify_role,
 )
-from rbac import require_role, ROLE_PROCUREMENT_MANAGER
+from n8n_service import trigger_vendor_reorder_email
+from rbac import require_role, ROLE_PROCUREMENT_MANAGER, get_current_user
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
 _pm = Depends(require_role(ROLE_PROCUREMENT_MANAGER))
+
+BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -161,7 +165,7 @@ def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
     ).strftime("%Y-%m-%d")
     unit_price = req.unit_price if req.unit_price is not None else item.get("unit_price")
     total_price = (
-        round(req.quantity * unit_price, 2) if unit_price is not None else None
+        round(float(req.quantity) * float(unit_price), 2) if unit_price is not None else None
     )
 
     db.execute(
@@ -326,14 +330,17 @@ def vendor_confirm(token: str, db: Session = Depends(get_db)):
     order_id = str(row["id"])
 
     # Generate smart contract
+    # (quantity/unit_price come back as decimal.Decimal from NUMERIC columns —
+    # cast to float here since contract_service.py JSON-serializes the payload
+    # and doesn't know about SQL types; contract_service.py itself is unmodified)
     contract = create_smart_contract(
         order_code        = row["order_code"],
         item_name         = row["item_name"],
-        quantity          = row["quantity"],
+        quantity          = float(row["quantity"]),
         unit              = row["unit"],
         vendor_name       = row["vendor_name"],
         vendor_email      = row["vendor_email"],
-        unit_price        = row["unit_price"],
+        unit_price        = float(row["unit_price"]) if row["unit_price"] is not None else None,
         expected_delivery = str(row["expected_delivery"]),
     )
 
@@ -677,4 +684,329 @@ def get_order_invoice_pdf(order_id: str, db: Session = Depends(get_db)):
             "Content-Disposition": f"attachment; filename=invoice-{order['order_code']}.pdf"
         }
     )
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# AUTOMATED REORDERING — Procurement Manager approval workflow
+# (Section 3). Triggered by inventory_v2.run_inventory_check() when an
+# item's stock falls to/below its critical_threshold (<=20% of
+# min_threshold). Reuses create_smart_contract / execute_contract /
+# reject_contract / generate_invoice_data / generate_invoice_pdf as-is —
+# nothing in contract_service.py or invoice_service.py is touched here.
+#
+# Lifecycle:
+#   below-20% trigger -> smart contract created, stage='Pending PM Approval'
+#     -> PM approves   -> n8n emails vendor an Accept/Reject link, stage='Vendor Notified'
+#        PM rejects    -> contract rejected, stage='Cancelled by PM'
+#     -> vendor Accept -> contract executed, stage='Order Placed'
+#        vendor Reject -> contract rejected, stage='Vendor Rejected' (needs manual follow-up)
+# ────────────────────────────────────────────────────────────────────────────
+
+def create_pending_approval_order(db: Session, item: dict) -> dict:
+    """
+    Called from inventory_v2.run_inventory_check() for the <20% trigger.
+    Creates the order + smart contract immediately, but does NOT email the
+    vendor yet — that only happens once a Procurement Manager approves it.
+    """
+    if not item.get("vendor_name"):
+        return {"skipped": True, "reason": "no vendor assigned"}
+
+    order_id   = str(uuid.uuid4())
+    order_code = "ORD-" + uuid.uuid4().hex[:6].upper()
+    quantity   = item["reorder_quantity"]
+    unit_price = item.get("unit_price")
+    total_price = round(float(quantity) * float(unit_price), 2) if unit_price is not None else None
+    delivery_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
+
+    contract = create_smart_contract(
+        order_code        = order_code,
+        item_name         = item["name"],
+        quantity          = float(quantity),
+        unit              = item["unit"],
+        vendor_name       = item["vendor_name"],
+        vendor_email      = item["vendor_email"],
+        unit_price        = float(unit_price) if unit_price is not None else None,
+        expected_delivery = delivery_date,
+    )
+
+    db.execute(
+        text("""
+            INSERT INTO procurement_orders (
+              id, order_code, item_id, vendor_id, quantity, unit,
+              unit_price, total_price, trigger_type, stage,
+              expected_delivery, tracking_events,
+              below_20pct_trigger, pm_approval_status,
+              contract_status, contract_hash, smart_contract_data,
+              created_at, updated_at
+            ) VALUES (
+              :id, :code, :item_id, :vendor_id, :qty, :unit,
+              :unit_price, :total_price, 'VEMA-Triggered', 'Pending PM Approval',
+              :delivery, '[]'::jsonb,
+              TRUE, 'Pending',
+              'Pending', :hash, CAST(:contract_data AS jsonb),
+              NOW(), NOW()
+            )
+        """),
+        {
+            "id": order_id, "code": order_code,
+            "item_id": item["item_id"], "vendor_id": item["vendor_id"],
+            "qty": quantity, "unit": item["unit"],
+            "unit_price": unit_price, "total_price": total_price,
+            "delivery": delivery_date,
+            "hash": contract["contract_hash"],
+            "contract_data": json.dumps(contract["contract_data"]),
+        },
+    )
+    db.execute(
+        text("""
+            INSERT INTO contract_audit_log (id, order_id, action, tx_hash, block_number, payload, performed_at)
+            VALUES (:id, :oid, 'Created', :hash, :block, CAST(:payload AS jsonb), NOW())
+        """),
+        {
+            "id": str(uuid.uuid4()), "oid": order_id,
+            "hash": contract["contract_hash"], "block": contract["block_number"],
+            "payload": json.dumps({"reason": "stock <= 20% of min_threshold"}),
+        },
+    )
+    db.commit()
+
+    notify_role(
+        db, ROLE_PROCUREMENT_MANAGER,
+        category    = "Procurement Approvals",
+        title       = f"Reorder Approval Needed — {item['name']}",
+        description = (
+            f"{item['name']} stock is at {item['current_stock']} {item['unit']} "
+            f"(<=20% of minimum threshold). A smart contract order for "
+            f"{quantity} {item['unit']} from {item['vendor_name']} is awaiting your approval."
+        ),
+        metadata    = {"order_id": order_id, "order_code": order_code, "item_id": item["item_id"]},
+    )
+
+    return {"order_id": order_id, "order_code": order_code, "stage": "Pending PM Approval"}
+
+
+@router.get("/pending-approvals", dependencies=[_pm])
+def list_pending_approvals(db: Session = Depends(get_db)):
+    rows = db.execute(
+        text("""
+            SELECT o.*, i.name AS item_name, i.unit,
+                   v.name AS vendor_name, v.email AS vendor_email
+            FROM procurement_orders o
+            JOIN inventory_items i ON i.item_id = o.item_id
+            JOIN vendors v ON v.id = o.vendor_id
+            WHERE o.pm_approval_status = 'Pending'
+            ORDER BY o.created_at DESC
+        """)
+    ).mappings().all()
+    return {"orders": [_order_to_dict(dict(r)) for r in rows]}
+
+
+@router.post("/approve/{order_id}", dependencies=[_pm])
+def approve_reorder(order_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    from invoice_service import generate_invoice_data
+
+    order = _get_order(db, order_id)
+    if order["pm_approval_status"] != "Pending":
+        raise HTTPException(400, f"Order is not pending approval (status: {order['pm_approval_status']})")
+
+    token = secrets.token_urlsafe(32)
+    db.execute(
+        text("""
+            UPDATE procurement_orders SET
+              pm_approval_status = 'Approved',
+              pm_approved_by     = :uid,
+              pm_approved_at     = NOW(),
+              vendor_response_token = :token,
+              updated_at = NOW()
+            WHERE id = :id
+        """),
+        {"uid": user["id"], "token": token, "id": order_id},
+    )
+    db.commit()
+
+    order = _get_order(db, order_id)
+    invoice = generate_invoice_data(order)
+    accept_url = f"{BASE_URL}/api/procurement/vendor-response/{order_id}?decision=accept&token={token}"
+    reject_url = f"{BASE_URL}/api/procurement/vendor-response/{order_id}?decision=reject&token={token}"
+    invoice_pdf_url = f"{BASE_URL}/api/procurement/vendor-invoice/{order_id}?token={token}"
+
+    result = trigger_vendor_reorder_email(order, invoice, accept_url, reject_url, invoice_pdf_url)
+
+    db.execute(
+        text("""
+            INSERT INTO vendor_comm_log (id, order_id, channel, status, triggered_by, response_body, sent_at)
+            VALUES (:id, :oid, 'n8n-email', :status, :uid, :body, NOW())
+        """),
+        {
+            "id": str(uuid.uuid4()), "oid": order_id,
+            "status": result["status"], "uid": user["id"], "body": result["response_body"],
+        },
+    )
+    db.execute(
+        text("UPDATE procurement_orders SET stage='Vendor Notified', vendor_email_sent=TRUE, vendor_email_sent_at=NOW() WHERE id=:id"),
+        {"id": order_id},
+    )
+    db.commit()
+
+    return {
+        "message": f"Order {order['order_code']} approved. Vendor email {result['status'].lower()}.",
+        "vendor_email_status": result["status"],
+    }
+
+
+class RejectApprovalRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post("/reject/{order_id}", dependencies=[_pm])
+def reject_reorder(order_id: str, req: RejectApprovalRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    order = _get_order(db, order_id)
+    if order["pm_approval_status"] != "Pending":
+        raise HTTPException(400, f"Order is not pending approval (status: {order['pm_approval_status']})")
+
+    contract_data = order.get("smart_contract_data") or {}
+    if isinstance(contract_data, str):
+        contract_data = json.loads(contract_data)
+    reject_contract(order["contract_hash"], contract_data, req.reason or "Rejected by Procurement Manager")
+
+    db.execute(
+        text("""
+            UPDATE procurement_orders SET
+              pm_approval_status = 'Rejected',
+              pm_approved_by     = :uid,
+              pm_approved_at     = NOW(),
+              pm_decision_notes  = :notes,
+              stage              = 'Cancelled by PM',
+              contract_status    = 'Rejected',
+              updated_at = NOW()
+            WHERE id = :id
+        """),
+        {"uid": user["id"], "notes": req.reason, "id": order_id},
+    )
+    db.commit()
+
+    notify_role(db, ROLE_PROCUREMENT_MANAGER, "Procurement Approvals",
+                f"Reorder Rejected — {order['order_code']}",
+                f"You rejected the auto-triggered reorder for {order['item_name']}. No vendor email was sent.")
+    return {"message": f"Order {order['order_code']} rejected. No vendor email sent."}
+
+
+@router.post("/vendor-response/{order_id}")
+def vendor_response(
+    order_id: str,
+    decision: str = Query(..., pattern="^(accept|reject)$"),
+    token: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Public — reached from the Accept/Reject buttons in the n8n vendor email.
+    Authenticated by the per-order signed token, not a login (the vendor has
+    no NEXUS ERP account). Mirrors /confirm/{token}'s "public, token-secured"
+    pattern used by the existing manual-order flow.
+    """
+    order = _get_order(db, order_id)
+    if order["vendor_response_token"] != token or not token:
+        raise HTTPException(404, "Invalid or expired response link")
+    if order["pm_approval_status"] != "Approved":
+        raise HTTPException(400, "This order is not awaiting a vendor response")
+    if order.get("vendor_decision"):
+        return {"message": f"Order {order['order_code']} already recorded a vendor decision: {order['vendor_decision']}"}
+
+    contract_data = order.get("smart_contract_data") or {}
+    if isinstance(contract_data, str):
+        contract_data = json.loads(contract_data)
+
+    if decision == "accept":
+        contract_data = sign_contract(order["contract_hash"], order["vendor_name"], "vendor", contract_data)
+        exec_result = execute_contract(order["contract_hash"], contract_data)
+        db.execute(
+            text("""
+                UPDATE procurement_orders SET
+                  vendor_decision = 'Accepted', vendor_responded_at = NOW(),
+                  stage = 'Order Placed', contract_status = 'Executed',
+                  contract_executed_at = NOW(), vendor_confirmed = TRUE, vendor_confirmed_at = NOW(),
+                  smart_contract_data = CAST(:data AS jsonb), updated_at = NOW()
+                WHERE id = :id
+            """),
+            {"data": json.dumps(exec_result["contract_data"]), "id": order_id},
+        )
+        db.commit()
+        notify_role(db, "admin", "Confirmations", f"Reorder Placed — {order['order_code']}",
+                    f"The reorder has been placed — {order['item_name']}, {order['vendor_name']}, "
+                    f"{order['quantity']:.0f} {order['unit']}.")
+        notify_role(db, ROLE_PROCUREMENT_MANAGER, "Confirmations", f"Reorder Placed — {order['order_code']}",
+                    f"The reorder has been placed — {order['item_name']}, {order['vendor_name']}, "
+                    f"{order['quantity']:.0f} {order['unit']}.")
+        return {"message": f"Order {order['order_code']} accepted. Smart contract executed."}
+    else:
+        reject_contract(order["contract_hash"], contract_data, "Vendor rejected the reorder")
+        db.execute(
+            text("""
+                UPDATE procurement_orders SET
+                  vendor_decision = 'Rejected', vendor_responded_at = NOW(),
+                  stage = 'Vendor Rejected', contract_status = 'Rejected', updated_at = NOW()
+                WHERE id = :id
+            """),
+            {"id": order_id},
+        )
+        db.commit()
+        msg = (f"Vendor {order['vendor_name']} declined reorder {order['order_code']} "
+               f"({order['item_name']}). Manual follow-up needed.")
+        notify_role(db, "admin", "Updates", f"Reorder Declined — {order['order_code']}", msg)
+        notify_role(db, ROLE_PROCUREMENT_MANAGER, "Updates", f"Reorder Declined — {order['order_code']}", msg)
+        return {"message": f"Order {order['order_code']} rejected by vendor. Contract not finalized."}
+
+
+@router.get("/vendor-invoice/{order_id}")
+def vendor_invoice_pdf(order_id: str, token: str = Query(...), db: Session = Depends(get_db)):
+    """Public, token-secured invoice download for the vendor email's invoice link."""
+    from fastapi.responses import Response
+    from invoice_service import generate_invoice_data, generate_invoice_pdf
+
+    order = _get_order(db, order_id)
+    if order["vendor_response_token"] != token or not token:
+        raise HTTPException(404, "Invalid or expired invoice link")
+    invoice = generate_invoice_data(order)
+    pdf_bytes = generate_invoice_pdf(invoice)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=invoice-{order['order_code']}.pdf"},
+    )
+
+
+@router.get("/vendor-comm-log/{order_id}", dependencies=[_pm])
+def get_vendor_comm_log(order_id: str, db: Session = Depends(get_db)):
+    rows = db.execute(
+        text("SELECT * FROM vendor_comm_log WHERE order_id = :id ORDER BY sent_at DESC"),
+        {"id": order_id},
+    ).mappings().all()
+    return {"log": [dict(r) for r in rows]}
+
+
+@router.post("/vendor-comm-log/{order_id}/resend", dependencies=[_pm])
+def resend_vendor_email(order_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Re-fires the same n8n vendor email using the order's existing token."""
+    from invoice_service import generate_invoice_data
+
+    order = _get_order(db, order_id)
+    if not order.get("vendor_response_token"):
+        raise HTTPException(400, "This order was never approved for a vendor email")
+
+    token = order["vendor_response_token"]
+    invoice = generate_invoice_data(order)
+    accept_url = f"{BASE_URL}/api/procurement/vendor-response/{order_id}?decision=accept&token={token}"
+    reject_url = f"{BASE_URL}/api/procurement/vendor-response/{order_id}?decision=reject&token={token}"
+    invoice_pdf_url = f"{BASE_URL}/api/procurement/vendor-invoice/{order_id}?token={token}"
+
+    result = trigger_vendor_reorder_email(order, invoice, accept_url, reject_url, invoice_pdf_url)
+    db.execute(
+        text("""
+            INSERT INTO vendor_comm_log (id, order_id, channel, status, triggered_by, response_body, sent_at)
+            VALUES (:id, :oid, 'n8n-email', :status, :uid, :body, NOW())
+        """),
+        {"id": str(uuid.uuid4()), "oid": order_id, "status": result["status"], "uid": user["id"], "body": result["response_body"]},
+    )
+    db.commit()
+    return {"message": f"Vendor email resent ({result['status']}).", "vendor_email_status": result["status"]}
 

@@ -187,7 +187,7 @@ export interface ProcurementOrder {
   quantity: number;
   unit_price: number | null;
   total_price: number | null;
-  trigger_type: "VEMA-Triggered" | "Auto-Generated" | "Manual";
+  trigger_type: "VEMA-Triggered" | "Auto-Generated" | "Auto-Generated (Demand > Stock)" | "Manual";
   stage: string;
   vendor_email_sent: boolean;
   vendor_confirmed: boolean;
@@ -199,6 +199,13 @@ export interface ProcurementOrder {
   delivery_condition: string | null;
   tracking_events: TrackingEvent[];
   smart_contract_data: Record<string, unknown> | null;
+  below_20pct_trigger?: boolean;
+  pm_approval_status?: "Not Required" | "Pending" | "Approved" | "Rejected";
+  pm_approved_by?: string | null;
+  pm_approved_at?: string | null;
+  vendor_response_token?: string | null;
+  vendor_decision?: "Accepted" | "Rejected" | null;
+  vendor_responded_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -277,6 +284,43 @@ export const submitDeliveryCheckin = (
 
 export const getCheckins = (orderId: string) =>
   apiFetch<{ checkins: DeliveryCheckin[] }>(`/api/procurement/checkins/${orderId}`);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROCUREMENT MANAGER — REORDER APPROVAL WORKFLOW (Section 3)
+// ═══════════════════════════════════════════════════════════════════════════════
+export const listPendingApprovals = () =>
+  apiFetch<{ orders: ProcurementOrder[] }>("/api/procurement/pending-approvals");
+
+export const approveReorder = (orderId: string) =>
+  apiFetch<{ message: string; vendor_email_status: string }>(
+    `/api/procurement/approve/${orderId}`,
+    { method: "POST" }
+  );
+
+export const rejectReorder = (orderId: string, reason?: string) =>
+  apiFetch<{ message: string }>(`/api/procurement/reject/${orderId}`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+
+export interface VendorCommLogEntry {
+  id: string;
+  order_id: string;
+  channel: string;
+  status: "Sent" | "Failed" | "Simulated";
+  triggered_by: string | null;
+  response_body: string | null;
+  sent_at: string;
+}
+
+export const getVendorCommLog = (orderId: string) =>
+  apiFetch<{ log: VendorCommLogEntry[] }>(`/api/procurement/vendor-comm-log/${orderId}`);
+
+export const resendVendorEmail = (orderId: string) =>
+  apiFetch<{ message: string; vendor_email_status: string }>(
+    `/api/procurement/vendor-comm-log/${orderId}/resend`,
+    { method: "POST" }
+  );
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // BILLING / INVOICES

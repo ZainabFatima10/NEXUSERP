@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   CheckCheck, ShieldCheck, RefreshCw, Cpu,
-  Cloud, MessageSquare, Loader2, Bell,
+  Cloud, MessageSquare, Loader2, Bell, ShoppingCart,
 } from "lucide-react";
 import {
   getNotifications, markNotificationRead,
@@ -17,7 +17,8 @@ type Category =
   | "Updates"
   | "Resource Allocation"
   | "Outage Updates"
-  | "User Complaints";
+  | "User Complaints"
+  | "Procurement Approvals";
 
 const categoryIcons: Record<string, React.ReactNode> = {
   Confirmations:       <ShieldCheck size={16} className="text-primary" />,
@@ -25,6 +26,7 @@ const categoryIcons: Record<string, React.ReactNode> = {
   "Resource Allocation": <Cpu size={16} className="text-success" />,
   "Outage Updates":    <Cloud size={16} className="text-secondary" />,
   "User Complaints":   <MessageSquare size={16} className="text-warning" />,
+  "Procurement Approvals": <ShoppingCart size={16} className="text-accent-violet" />,
 };
 
 const categoryBorders: Record<string, string> = {
@@ -33,6 +35,7 @@ const categoryBorders: Record<string, string> = {
   "Resource Allocation": "border-accent-green",
   "Outage Updates":      "border-accent-violet",
   "User Complaints":     "border-accent-amber",
+  "Procurement Approvals": "border-accent-violet",
 };
 
 function timeAgo(iso: string): string {
@@ -56,7 +59,7 @@ const Notifications = () => {
 
   const categories: Category[] = [
     "All", "Confirmations", "Updates",
-    "Resource Allocation", "Outage Updates", "User Complaints",
+    "Resource Allocation", "Outage Updates", "User Complaints", "Procurement Approvals",
   ];
 
   const load = useCallback(async () => {

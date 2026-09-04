@@ -145,6 +145,28 @@ def notify_stock_low(db: Session, item_name: str, current_stock: float, item_id:
     )
 
 
+def notify_role(
+    db: Session,
+    role: str,
+    category: str,
+    title: str,
+    description: str,
+    metadata: dict = None,
+):
+    """
+    Insert one notification per user currently holding `role` (e.g. every
+    Procurement Manager). Used by the reorder-approval workflow — the
+    notifications table only has user_id (no role column), so this fans
+    a single event out to every matching user.
+    """
+    user_ids = db.execute(
+        text("SELECT id FROM users WHERE role = :role AND is_active = TRUE"),
+        {"role": role},
+    ).scalars().all()
+    for uid in user_ids:
+        create_notification(db, category, title, description, user_id=str(uid), metadata=metadata)
+
+
 def notify_out_of_stock(db: Session, item_name: str, item_id: str):
     create_notification(
         db,

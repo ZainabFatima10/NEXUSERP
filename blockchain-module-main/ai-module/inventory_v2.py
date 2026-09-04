@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from database import get_db
-from notification_service import notify_stock_critical, notify_stock_low, notify_out_of_stock
+from notification_service import notify_stock_low
 from rbac import require_role, ROLE_PROCUREMENT_MANAGER
 
 router = APIRouter(prefix="/api/inventory", tags=["Inventory"])
@@ -151,7 +151,7 @@ def run_inventory_check(
     Trigger inventory scan. For each Low/Critical item without an open order,
     create a procurement order automatically (calls procurement route logic directly).
     """
-    from procurement import create_order, CreateOrderRequest
+    from procurement import create_order, CreateOrderRequest, create_pending_approval_order
 
     rows = db.execute(
         text("""
@@ -176,10 +176,12 @@ def run_inventory_check(
         if item["item_id"] in open_set:
             continue
         trigger = None
-        if item["current_stock"] < item.get("predicted_demand", 0):
-            trigger = "Auto-Generated (Demand > Stock)"
-        elif item["status"] in ("Critical", "Out of Stock"):
+        if item["status"] in ("Critical", "Out of Stock"):
+            # <=20% of min_threshold always takes the PM-approval path
+            # (Section 3a), even if the demand heuristic below would also fire.
             trigger = "VEMA-Triggered"
+        elif item["current_stock"] < item.get("predicted_demand", 0):
+            trigger = "Auto-Generated (Demand > Stock)"
         elif item["status"] == "Low":
             trigger = "Auto-Generated"
 
@@ -196,16 +198,13 @@ def run_inventory_check(
                 "desc":  f"Predicted demand ({item['predicted_demand']} {item.get('unit', 'units')}) exceeds current stock ({item['current_stock']} {item.get('unit', 'units')}). Auto-generated order placed."
             })
             db.commit()
-        elif item["status"] == "Out of Stock":
-            background_tasks.add_task(
-                notify_out_of_stock, db,
-                item["name"], item["item_id"]
-            )
-        elif item["status"] == "Critical":
-            background_tasks.add_task(
-                notify_stock_critical, db,
-                item["name"], item["current_stock"], item["item_id"]
-            )
+        elif item["status"] in ("Critical", "Out of Stock"):
+            # <=20% of min_threshold (Section 3a) — smart contract is created
+            # immediately, but the vendor is NOT emailed until a Procurement
+            # Manager approves it. See RBAC_WIRING.md / N8N_AUTOMATION_WIRING.md.
+            result = create_pending_approval_order(db, item)
+            created.append(result)
+            continue
         else:
             background_tasks.add_task(
                 notify_stock_low, db,

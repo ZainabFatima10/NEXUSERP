@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
     email           VARCHAR(255) UNIQUE NOT NULL,
     password_hash   VARCHAR(255) NOT NULL,
     role            VARCHAR(50) NOT NULL DEFAULT 'Operator',
-    -- role: Admin | Manager | Operator | Vendor
+    -- role: admin | customer_rep | procurement_manager | customer (see 002_*.sql / RBAC_WIRING.md)
+    -- legacy values Manager | Operator | Vendor kept for backward compatibility, unused by any route
     is_active       BOOLEAN DEFAULT TRUE,
     created_at      TIMESTAMPTZ DEFAULT NOW(),
     updated_at      TIMESTAMPTZ DEFAULT NOW()
@@ -233,12 +234,15 @@ ON CONFLICT DO NOTHING;
 
 -- ============================================================
 -- SEED: Admin user (password: nexus2026)
--- hash generated with: SELECT crypt('nexus2026', gen_salt('bf'))
+-- hash generated with Python's bcrypt (what auth.py actually verifies
+-- against — NOT pgcrypto's crypt()/gen_salt('bf'), whose output uses a
+-- different $2a$/$2b$ identifier convention and did not verify here):
+--   python3 -c "import bcrypt" then bcrypt.hashpw(b'nexus2026', bcrypt.gensalt())
 -- ============================================================
 INSERT INTO users (id, name, email, password_hash, role) VALUES
   ('aaaaaaaa-0000-0000-0000-000000000001',
    'Admin User',
    'admin@nexus.pk',
-   '$2a$06$H.wMYmMUPv9e.Q8nE7YWaOWTrPYy5Dm3/3jxCuJzSmgmMvj5jfSHm',
-   'Admin')
+   '$2b$10$5P1gyb4zxlWBsj9UizAczeZwN55HSbZoVYRur1h9emmcumQvstI8u',
+   'admin')
 ON CONFLICT DO NOTHING;

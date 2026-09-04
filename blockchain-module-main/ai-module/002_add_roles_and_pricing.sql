@@ -46,27 +46,36 @@ ALTER TABLE users ADD CONSTRAINT users_role_check
 -- ------------------------------------------------------------
 -- Seed: Customer Representative + Procurement Manager test accounts
 -- Passwords documented in RBAC_WIRING.md (dev/test credentials only).
--- Hashes generated with: SELECT crypt('<password>', gen_salt('bf'))
+-- Hash generated with Python's bcrypt (see 001_schema.sql's note on why
+-- pgcrypto's crypt()/gen_salt('bf') output doesn't verify against auth.py):
+--   python3 -c "import bcrypt" then bcrypt.hashpw(b'nexus2026', bcrypt.gensalt())
 -- ------------------------------------------------------------
 INSERT INTO users (id, name, email, password_hash, role) VALUES
   ('aaaaaaaa-0000-0000-0000-000000000002',
    'Sara Malik',
    'cr@nexus.pk',
-   '$2a$06$H.wMYmMUPv9e.Q8nE7YWaOWTrPYy5Dm3/3jxCuJzSmgmMvj5jfSHm', -- nexus2026
+   '$2b$10$5P1gyb4zxlWBsj9UizAczeZwN55HSbZoVYRur1h9emmcumQvstI8u', -- nexus2026
    'customer_rep')
-ON CONFLICT (email) DO UPDATE SET role = 'customer_rep';
+ON CONFLICT (email) DO UPDATE SET role = 'customer_rep', password_hash = EXCLUDED.password_hash;
 
 INSERT INTO users (id, name, email, password_hash, role) VALUES
   ('aaaaaaaa-0000-0000-0000-000000000003',
    'Ahmed Raza',
    'procurement@nexus.pk',
-   '$2a$06$H.wMYmMUPv9e.Q8nE7YWaOWTrPYy5Dm3/3jxCuJzSmgmMvj5jfSHm', -- nexus2026
+   '$2b$10$5P1gyb4zxlWBsj9UizAczeZwN55HSbZoVYRur1h9emmcumQvstI8u', -- nexus2026
    'procurement_manager')
-ON CONFLICT (email) DO UPDATE SET role = 'procurement_manager';
+ON CONFLICT (email) DO UPDATE SET role = 'procurement_manager', password_hash = EXCLUDED.password_hash;
+
+-- Correct the admin seed's password hash for any database created before
+-- this fix (001_schema.sql's ON CONFLICT DO NOTHING means it never
+-- retroactively fixes an existing row).
+UPDATE users SET password_hash = '$2b$10$5P1gyb4zxlWBsj9UizAczeZwN55HSbZoVYRur1h9emmcumQvstI8u'
+  WHERE email = 'admin@nexus.pk'
+    AND password_hash = '$2a$06$H.wMYmMUPv9e.Q8nE7YWaOWTrPYy5Dm3/3jxCuJzSmgmMvj5jfSHm';
 
 -- ------------------------------------------------------------
 -- Notification category used by role-scoped procurement alerts
--- (documented for reference; category column is free-text already)
+-- (documented for reference -- category column is free-text already)
 -- ------------------------------------------------------------
 -- category values now in use: Confirmations | Updates | Resource Allocation
 --   | Outage Updates | User Complaints | Procurement Approvals
