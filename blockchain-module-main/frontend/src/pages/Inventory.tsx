@@ -363,106 +363,110 @@ const Inventory = () => {
       {/* ── OVERVIEW TAB ────────────────────────────────────────────────── */}
       {tab === "overview" && (
         <div className="glass-card overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-muted/20">
-              <tr>
-                <SortHeader col="name">Item Name</SortHeader>
-                <SortHeader col="stock">Stock</SortHeader>
-                <SortHeader col="predicted_demand">Pred. Demand</SortHeader>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Level</th>
-                <SortHeader col="status">Status</SortHeader>
-                <SortHeader col="days_until_reorder">Days to Reorder</SortHeader>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Unit Price</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Vendor</th>
-                <SortHeader col="last_updated">Updated</SortHeader>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {items.map((item) => (
-                <tr key={item.item_id} className="hover:bg-muted/10 transition-colors">
-                  <td className="px-4 py-3 text-sm font-medium">{item.name}</td>
-                  <td className="px-4 py-3 text-sm font-mono">
-                    {item.current_stock.toLocaleString()} {item.unit}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono text-accent-cyan">
-                    {item.predicted_demand ? item.predicted_demand.toLocaleString() : "—"}
-                  </td>
-                  <td className="px-4 py-3 w-32"><StockBar pct={item.stock_pct} /></td>
-                  <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                  <td className="px-4 py-3 text-sm text-center">
-                    {item.days_until_reorder === 0
-                      ? <span className="text-destructive font-semibold">Now</span>
-                      : item.days_until_reorder}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                    {item.unit_price != null ? `USD ${item.unit_price.toLocaleString()}` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">{item.vendor_name}</td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {new Date(item.last_updated).toLocaleDateString()}
-                  </td>
+          <div className="overflow-x-auto">
+              <table className="w-full">
+              <thead className="bg-muted/20">
+                <tr>
+                  <SortHeader col="name">Item Name</SortHeader>
+                  <SortHeader col="stock">Stock</SortHeader>
+                  <SortHeader col="predicted_demand">Pred. Demand</SortHeader>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Level</th>
+                  <SortHeader col="status">Status</SortHeader>
+                  <SortHeader col="days_until_reorder">Days to Reorder</SortHeader>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Unit Price</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Vendor</th>
+                  <SortHeader col="last_updated">Updated</SortHeader>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {items.map((item) => (
+                  <tr key={item.item_id} className="hover:bg-muted/10 transition-colors">
+                    <td className="px-4 py-3 text-sm font-medium">{item.name}</td>
+                    <td className="px-4 py-3 text-sm font-mono">
+                      {item.current_stock.toLocaleString()} {item.unit}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono text-accent-cyan">
+                      {item.predicted_demand ? item.predicted_demand.toLocaleString() : "—"}
+                    </td>
+                    <td className="px-4 py-3 w-32"><StockBar pct={item.stock_pct} /></td>
+                    <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
+                    <td className="px-4 py-3 text-sm text-center">
+                      {item.days_until_reorder === 0
+                        ? <span className="text-destructive font-semibold">Now</span>
+                        : item.days_until_reorder}
+                    </td>
+                    <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
+                      {item.unit_price != null ? `USD ${item.unit_price.toLocaleString()}` : "—"}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{item.vendor_name}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">
+                      {new Date(item.last_updated).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {/* ── CURRENT ORDERS TAB ──────────────────────────────────────────── */}
       {tab === "orders" && (
         <div className="glass-card overflow-hidden">
-          <table className="w-full">
-            <thead className="bg-muted/20">
-              <tr>
-                <SortHeader col="order_code">Order ID</SortHeader>
-                <SortHeader col="item_name">Item</SortHeader>
-                <SortHeader col="quantity">Qty</SortHeader>
-                <SortHeader col="vendor_name">Vendor</SortHeader>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Trigger</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Contract</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Progress</th>
-                <SortHeader col="expected_delivery">Delivery</SortHeader>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {activeOrders.length === 0 && (
+          <div className="overflow-x-auto">
+              <table className="w-full">
+              <thead className="bg-muted/20">
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                    No active orders. Run Inventory Check to generate orders.
-                  </td>
+                  <SortHeader col="order_code">Order ID</SortHeader>
+                  <SortHeader col="item_name">Item</SortHeader>
+                  <SortHeader col="quantity">Qty</SortHeader>
+                  <SortHeader col="vendor_name">Vendor</SortHeader>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Trigger</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Contract</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Progress</th>
+                  <SortHeader col="expected_delivery">Delivery</SortHeader>
+                  <th className="px-4 py-3" />
                 </tr>
-              )}
-              {activeOrders.map((order) => (
-                <tr key={order.id} className="hover:bg-muted/10 transition-colors">
-                  <td className="px-4 py-3 text-sm font-mono text-primary">{order.order_code}</td>
-                  <td className="px-4 py-3 text-sm font-medium">{order.item_name}</td>
-                  <td className="px-4 py-3 text-sm">{order.quantity.toLocaleString()} {order.unit}</td>
-                  <td className="px-4 py-3 text-sm">{order.vendor_name}</td>
-                  <td className="px-4 py-3"><TriggerBadge type={order.trigger_type} /></td>
-                  <td className="px-4 py-3"><StatusBadge status={order.contract_status} /></td>
-                  <td className="px-4 py-3 min-w-[200px]"><OrderStepper stage={order.stage} /></td>
-                  <td className="px-4 py-3 text-sm text-muted-foreground">{order.expected_delivery}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3 whitespace-nowrap">
-                      <button
-                        onClick={() => { setSelectedOrder(order); setShowModal(true); }}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        View Details
-                      </button>
-                      <button
-                        onClick={() => setInvoiceOrderId(order.id)}
-                        className="text-xs text-accent-cyan hover:underline"
-                      >
-                        View Bill
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {activeOrders.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                      No active orders. Run Inventory Check to generate orders.
+                    </td>
+                  </tr>
+                )}
+                {activeOrders.map((order) => (
+                  <tr key={order.id} className="hover:bg-muted/10 transition-colors">
+                    <td className="px-4 py-3 text-sm font-mono text-primary">{order.order_code}</td>
+                    <td className="px-4 py-3 text-sm font-medium">{order.item_name}</td>
+                    <td className="px-4 py-3 text-sm">{order.quantity.toLocaleString()} {order.unit}</td>
+                    <td className="px-4 py-3 text-sm">{order.vendor_name}</td>
+                    <td className="px-4 py-3"><TriggerBadge type={order.trigger_type} /></td>
+                    <td className="px-4 py-3"><StatusBadge status={order.contract_status} /></td>
+                    <td className="px-4 py-3 min-w-[200px]"><OrderStepper stage={order.stage} /></td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">{order.expected_delivery}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3 whitespace-nowrap">
+                        <button
+                          onClick={() => { setSelectedOrder(order); setShowModal(true); }}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          View Details
+                        </button>
+                        <button
+                          onClick={() => setInvoiceOrderId(order.id)}
+                          className="text-xs text-accent-cyan hover:underline"
+                        >
+                          View Bill
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -475,62 +479,64 @@ const Inventory = () => {
             </button>
           </div>
           <div className="glass-card overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-muted/20">
-                <tr>
-                  <SortHeader col="order_code">Order ID</SortHeader>
-                  <SortHeader col="item_name">Item</SortHeader>
-                  <SortHeader col="quantity">Qty</SortHeader>
-                  <SortHeader col="vendor_name">Vendor</SortHeader>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Tx Hash</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Condition</th>
-                  <SortHeader col="actual_delivery">Delivered</SortHeader>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {pastOrders.length === 0 && (
+            <div className="overflow-x-auto">
+                <table className="w-full">
+                <thead className="bg-muted/20">
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      No delivered orders yet.
-                    </td>
+                    <SortHeader col="order_code">Order ID</SortHeader>
+                    <SortHeader col="item_name">Item</SortHeader>
+                    <SortHeader col="quantity">Qty</SortHeader>
+                    <SortHeader col="vendor_name">Vendor</SortHeader>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Tx Hash</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Condition</th>
+                    <SortHeader col="actual_delivery">Delivered</SortHeader>
+                    <th className="px-4 py-3" />
                   </tr>
-                )}
-                {pastOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-muted/10 transition-colors">
-                    <td className="px-4 py-3 text-sm font-mono text-primary">{order.order_code}</td>
-                    <td className="px-4 py-3 text-sm">{order.item_name}</td>
-                    <td className="px-4 py-3 text-sm">{order.quantity.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-sm">{order.vendor_name}</td>
-                    <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
-                      {order.contract_hash
-                        ? `${order.contract_hash.slice(0, 10)}…${order.contract_hash.slice(-6)}`
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {order.delivery_condition && <StatusBadge status={order.delivery_condition} />}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-muted-foreground">{order.actual_delivery || "—"}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3 whitespace-nowrap">
-                        <button
-                          onClick={() => { setSelectedOrder(order); setShowModal(true); }}
-                          className="text-xs text-primary hover:underline"
-                        >
-                          View
-                        </button>
-                        <button
-                          onClick={() => setInvoiceOrderId(order.id)}
-                          className="text-xs text-accent-cyan hover:underline"
-                        >
-                          Bill
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {pastOrders.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        No delivered orders yet.
+                      </td>
+                    </tr>
+                  )}
+                  {pastOrders.map((order) => (
+                    <tr key={order.id} className="hover:bg-muted/10 transition-colors">
+                      <td className="px-4 py-3 text-sm font-mono text-primary">{order.order_code}</td>
+                      <td className="px-4 py-3 text-sm">{order.item_name}</td>
+                      <td className="px-4 py-3 text-sm">{order.quantity.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-sm">{order.vendor_name}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-muted-foreground">
+                        {order.contract_hash
+                          ? `${order.contract_hash.slice(0, 10)}…${order.contract_hash.slice(-6)}`
+                          : "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {order.delivery_condition && <StatusBadge status={order.delivery_condition} />}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{order.actual_delivery || "—"}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3 whitespace-nowrap">
+                          <button
+                            onClick={() => { setSelectedOrder(order); setShowModal(true); }}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            View
+                          </button>
+                          <button
+                            onClick={() => setInvoiceOrderId(order.id)}
+                            className="text-xs text-accent-cyan hover:underline"
+                          >
+                            Bill
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -547,56 +553,58 @@ const Inventory = () => {
             </button>
           </div>
           <div className="glass-card overflow-hidden">
-            <table className="w-full">
-              <thead className="bg-muted/20">
-                <tr>
-                  <SortHeader col="name">Item Name</SortHeader>
-                  <SortHeader col="current_stock">Current Stock</SortHeader>
-                  <SortHeader col="min_threshold">Min Threshold</SortHeader>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Trigger Type</th>
-                  <SortHeader col="days_until_critical">Days to Critical</SortHeader>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Reorder Qty</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {[...criticalItems, ...lowItems].map((item) => (
-                  <tr key={item.item_id} className="hover:bg-muted/10 transition-colors">
-                    <td className="px-4 py-3 text-sm font-medium">{item.name}</td>
-                    <td className="px-4 py-3 text-sm text-destructive font-semibold">
-                      {item.current_stock.toLocaleString()} {item.unit}
-                    </td>
-                    <td className="px-4 py-3 text-sm">{item.min_threshold.toLocaleString()}</td>
-                    <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
-                    <td className="px-4 py-3">
-                      <TriggerBadge type={item.status === "Critical" ? "VEMA-Triggered" : "Auto-Generated"} />
-                    </td>
-                    <td className="px-4 py-3 text-sm text-center">
-                      {item.days_until_critical === 0
-                        ? <span className="text-destructive font-semibold">Now</span>
-                        : item.days_until_critical}
-                    </td>
-                    <td className="px-4 py-3 text-sm">{item.reorder_quantity.toLocaleString()}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        onClick={() => goToProcurement(item.item_id, item.reorder_quantity)}
-                        className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
-                      >
-                        <ShoppingCart size={13} /> Reorder
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {criticalItems.length === 0 && lowItems.length === 0 && (
+            <div className="overflow-x-auto">
+                <table className="w-full">
+                <thead className="bg-muted/20">
                   <tr>
-                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      ✅ All inventory levels are healthy.
-                    </td>
+                    <SortHeader col="name">Item Name</SortHeader>
+                    <SortHeader col="current_stock">Current Stock</SortHeader>
+                    <SortHeader col="min_threshold">Min Threshold</SortHeader>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Status</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Trigger Type</th>
+                    <SortHeader col="days_until_critical">Days to Critical</SortHeader>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase">Reorder Qty</th>
+                    <th className="px-4 py-3" />
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {[...criticalItems, ...lowItems].map((item) => (
+                    <tr key={item.item_id} className="hover:bg-muted/10 transition-colors">
+                      <td className="px-4 py-3 text-sm font-medium">{item.name}</td>
+                      <td className="px-4 py-3 text-sm text-destructive font-semibold">
+                        {item.current_stock.toLocaleString()} {item.unit}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{item.min_threshold.toLocaleString()}</td>
+                      <td className="px-4 py-3"><StatusBadge status={item.status} /></td>
+                      <td className="px-4 py-3">
+                        <TriggerBadge type={item.status === "Critical" ? "VEMA-Triggered" : "Auto-Generated"} />
+                      </td>
+                      <td className="px-4 py-3 text-sm text-center">
+                        {item.days_until_critical === 0
+                          ? <span className="text-destructive font-semibold">Now</span>
+                          : item.days_until_critical}
+                      </td>
+                      <td className="px-4 py-3 text-sm">{item.reorder_quantity.toLocaleString()}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={() => goToProcurement(item.item_id, item.reorder_quantity)}
+                          className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                        >
+                          <ShoppingCart size={13} /> Reorder
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {criticalItems.length === 0 && lowItems.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-sm text-muted-foreground">
+                        ✅ All inventory levels are healthy.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
