@@ -51,7 +51,7 @@ function App() {
             </Route>
 
             {/* Procurement Manager */}
-            <Route element={<ProtectedRoute allow={["procurement_manager", "admin"]} />}>
+            <Route element={<ProtectedRoute allow={["procurement_manager"]} />}>
               <Route path="/procurement" element={<ProcurementLayout />}>
                 <Route index element={<ProcurementDashboard />} />
                 <Route path="approvals" element={<ApprovalsQueue />} />
@@ -61,7 +61,7 @@ function App() {
             </Route>
 
             {/* Customer Representative */}
-            <Route element={<ProtectedRoute allow={["customer_rep", "admin"]} />}>
+            <Route element={<ProtectedRoute allow={["customer_rep"]} />}>
               <Route path="/cr" element={<CRLayout />}>
                 <Route index element={<CRDashboard />} />
                 <Route path="tickets" element={<TicketLog />} />
