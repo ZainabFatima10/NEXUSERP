@@ -1,8 +1,9 @@
 // src/pages/cr/TicketLog.tsx
-import { useEffect, useState, useCallback } from "react";
-import { Loader2, Mic, Bell, Ticket as TicketIcon } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Loader2, Mic, Bell, Ticket as TicketIcon, RefreshCw, Plus } from "lucide-react";
 import { Complaint, getComplaints } from "@/services/api";
 import TicketDetailModal from "@/components/TicketDetailModal";
+import LogComplaintModal from "@/components/LogComplaintModal";
 
 const severityStyle: Record<string, string> = {
   critical: "bg-destructive/10 text-destructive",
@@ -16,42 +17,64 @@ function minutesUntil(iso: string): number {
 
 const STATUS_OPTIONS = ["all", "open", "escalated", "auto_resolved", "resolved"];
 const SEVERITY_OPTIONS = ["all", "critical", "medium", "small"];
+const ORDER_OPTIONS: { value: "recent" | "priority"; label: string }[] = [
+  { value: "recent", label: "Newest first" },
+  { value: "priority", label: "Priority (critical first)" },
+];
 
 const TicketLog = () => {
   const [tickets, setTickets] = useState<Complaint[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);   // initial load only
+  const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState("all");
   const [severity, setSeverity] = useState("all");
+  const [order, setOrder] = useState<"recent" | "priority">("recent");
   const [selected, setSelected] = useState<string | null>(null);
+  const [logging, setLogging] = useState(false);
+  const firstLoad = useRef(true);
 
   const load = useCallback(() => {
-    setLoading(true);
+    if (firstLoad.current) setLoading(true);
+    else setRefreshing(true);
     getComplaints({
       status: status === "all" ? undefined : status,
       severity: severity === "all" ? undefined : severity,
+      order,
       limit: 200,
     })
       .then((res) => setTickets(res.tickets))
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [status, severity]);
+      .finally(() => {
+        setLoading(false);
+        setRefreshing(false);
+        firstLoad.current = false;
+      });
+  }, [status, severity, order]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const id = setInterval(load, 30000);
+    const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, [load]);
 
   return (
     <div className="space-y-6 animate-slide-up">
-      <div>
-        <h1 className="text-2xl font-heading font-bold">All Tickets</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Every ticket — VEMA-generated and manual — filterable by status and severity.
-        </p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-heading font-bold">All Tickets</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Every ticket — VEMA-generated and manual — filterable by status and severity.
+          </p>
+        </div>
+        <button
+          onClick={() => setLogging(true)}
+          className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium btn-navy rounded-lg flex-shrink-0"
+        >
+          <Plus size={15} /> Log Complaint
+        </button>
       </div>
 
-      <div className="flex gap-3 flex-wrap">
+      <div className="flex gap-3 flex-wrap items-center">
         <select
           value={status}
           onChange={(e) => setStatus(e.target.value)}
@@ -70,6 +93,27 @@ const TicketLog = () => {
             <option key={s} value={s}>{s === "all" ? "All severities" : s}</option>
           ))}
         </select>
+        <select
+          value={order}
+          onChange={(e) => setOrder(e.target.value as "recent" | "priority")}
+          className="px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          {ORDER_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <button
+          onClick={load}
+          disabled={refreshing || loading}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border hover:bg-muted disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={refreshing ? "animate-spin" : ""} /> Refresh
+        </button>
+        {!loading && (
+          <span className="text-xs text-muted-foreground ml-auto">
+            {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -119,6 +163,9 @@ const TicketLog = () => {
 
       {selected && (
         <TicketDetailModal ticketId={selected} onClose={() => setSelected(null)} onUpdated={load} />
+      )}
+      {logging && (
+        <LogComplaintModal onClose={() => setLogging(false)} onCreated={load} />
       )}
     </div>
   );

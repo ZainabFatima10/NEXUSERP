@@ -1,16 +1,20 @@
 """
 NEXUS ERP — VEMA Complaints Router
-  POST /api/complaints/voice   — push-to-talk voice complaint (customer)
+  POST /api/complaints/voice/transcribe — audio -> transcript ONLY, no ticket
+                                          (customer reviews/edits before submit)
+  POST /api/complaints/voice   — submit a (confirmed) voice complaint (customer)
   POST /api/complaints/chat    — text chat complaint (customer)
   POST /api/complaints/manual  — manual ticket entry (CR/admin)
   GET  /api/complaints         — full ticket log, filterable (CR/admin)
   GET  /api/complaints/mine    — the logged-in customer's own tickets
   GET  /api/complaints/{id}    — ticket detail + full conversation history
   PATCH /api/complaints/{id}   — CR resolve / escalate
+  DELETE /api/complaints/{id}  — customer withdraws their own complaint
+                                 (only while it hasn't been escalated/resolved)
 """
 import base64
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -36,23 +40,39 @@ def _ticket_to_dict(row: dict) -> dict:
 # Customer Portal intake (Section 5b)
 # ────────────────────────────────────────────────────────────────────────────
 
-@router.post("/voice", dependencies=[_customer])
-async def submit_voice_complaint(
-    audio: UploadFile = File(...),
-    area: Optional[str] = Form(None),
-    user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+@router.post("/voice/transcribe", dependencies=[_customer])
+async def transcribe_voice_complaint(audio: UploadFile = File(...)):
+    """
+    Speech-to-text only — does NOT create a ticket. The Customer Portal shows
+    the transcript back to the customer (editable) so they can correct STT
+    slips or re-record before committing. Submit the confirmed text to
+    POST /api/complaints/voice.
+    """
     audio_bytes = await audio.read()
     transcript = stt_service.transcribe(audio_bytes, audio.filename or "audio.webm")
-    text_content = transcript["text"]
+    if not transcript["text"]:
+        raise HTTPException(400, "Could not extract any speech from the audio — please try again.")
+    return {
+        "transcript": transcript["text"],
+        "transcription_engine": transcript["engine"],
+    }
+
+
+class VoiceComplaintRequest(BaseModel):
+    message: str          # the confirmed (possibly customer-edited) transcript
+    area: Optional[str] = None
+
+
+@router.post("/voice", dependencies=[_customer])
+def submit_voice_complaint(req: VoiceComplaintRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    text_content = (req.message or "").strip()
     if not text_content:
-        raise HTTPException(400, "Could not extract any speech from the audio")
+        raise HTTPException(400, "Complaint text is empty")
 
     result = vema_orchestrator.create_ticket(
         db, description=text_content, channel="voice",
         customer_id=user["id"], customer_name=user["name"], customer_email=user["email"],
-        area=area,
+        area=req.area,
     )
     reply_text = llm_service.generate_chat_reply(text_content, result["ticket_code"])
     speech = tts_service.synthesize(reply_text)
@@ -61,7 +81,6 @@ async def submit_voice_complaint(
         "ticket_code": result["ticket_code"],
         "ticket_id": result["ticket_id"],
         "transcript": text_content,
-        "transcription_engine": transcript["engine"],
         "classification": result["classification"],
         "status": result["status"],
         "reply_text": reply_text,
@@ -128,15 +147,30 @@ def create_manual_complaint(req: ManualComplaintRequest, user: dict = Depends(ge
     return result
 
 
+# "recent"   -> newest first (the log view — a just-filed ticket is always on top).
+# "priority" -> critical before medium before small, then newest first
+#               (triage view — but a new low-severity ticket sinks below the
+#               whole critical backlog, which reads as "my ticket vanished").
+_ORDER_CLAUSES = {
+    "recent": "created_at DESC",
+    "priority": (
+        "CASE severity WHEN 'critical' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, "
+        "created_at DESC"
+    ),
+}
+
+
 @router.get("", dependencies=[_cr])
 def list_complaints(
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
+    order: str = Query("recent"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
     db: Session = Depends(get_db),
 ):
+    order_by = _ORDER_CLAUSES.get(order, _ORDER_CLAUSES["recent"])
     filters = "WHERE 1=1"
     params: dict = {"limit": limit, "offset": offset}
     if status:
@@ -152,9 +186,7 @@ def list_complaints(
     rows = db.execute(
         text(f"""
             SELECT * FROM complaints {filters}
-            ORDER BY
-              CASE severity WHEN 'critical' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END,
-              created_at DESC
+            ORDER BY {order_by}
             LIMIT :limit OFFSET :offset
         """),
         params,
@@ -206,3 +238,31 @@ def update_complaint(ticket_id: str, req: UpdateComplaintRequest, user: dict = D
         return {"message": f"Ticket {code} escalated to Admin."}
     else:
         raise HTTPException(400, "action must be 'resolve' or 'escalate'")
+
+
+# Statuses a customer is still allowed to withdraw their own complaint from.
+# Once a CR is on it (escalated) or it's closed (resolved), it stays on record.
+_DELETABLE_BY_CUSTOMER = ("open", "auto_resolved")
+
+
+@router.delete("/{ticket_id}", dependencies=[_customer])
+def delete_complaint(ticket_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    row = db.execute(
+        text("SELECT ticket_code, customer_id, status FROM complaints WHERE id = :id"),
+        {"id": ticket_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(404, "Ticket not found")
+    if user["role"] == ROLE_CUSTOMER and str(row["customer_id"]) != user["id"]:
+        raise HTTPException(403, "Not your ticket")
+    if row["status"] not in _DELETABLE_BY_CUSTOMER:
+        raise HTTPException(
+            409,
+            "This complaint is already being handled by a representative or has "
+            "been resolved, so it can no longer be withdrawn.",
+        )
+
+    # complaint_events rows cascade (ON DELETE CASCADE in migration 004).
+    db.execute(text("DELETE FROM complaints WHERE id = :id"), {"id": ticket_id})
+    db.commit()
+    return {"message": f"Complaint {row['ticket_code']} withdrawn."}

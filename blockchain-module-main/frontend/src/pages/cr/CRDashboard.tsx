@@ -37,7 +37,7 @@ const CRDashboard = () => {
   const [selected, setSelected] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    getComplaints({ limit: 200 })
+    getComplaints({ order: "recent", limit: 200 })
       .then((res) => setTickets(res.tickets))
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -45,7 +45,7 @@ const CRDashboard = () => {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    const id = setInterval(load, 30000);
+    const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, [load]);
 

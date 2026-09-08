@@ -480,11 +480,15 @@ export interface ComplaintEvent {
   created_at: string;
 }
 
-export const getComplaints = (params?: { status?: string; category?: string; severity?: string; limit?: number }) => {
+export const getComplaints = (params?: {
+  status?: string; category?: string; severity?: string;
+  order?: "recent" | "priority"; limit?: number;
+}) => {
   const q = new URLSearchParams();
   if (params?.status) q.set("status", params.status);
   if (params?.category) q.set("category", params.category);
   if (params?.severity) q.set("severity", params.severity);
+  if (params?.order) q.set("order", params.order);
   if (params?.limit) q.set("limit", String(params.limit));
   return apiFetch<{ total: number; tickets: Complaint[] }>(`/api/complaints?${q}`);
 };
@@ -512,12 +516,15 @@ export const submitChatComplaint = (message: string, area?: string) =>
     { method: "POST", body: JSON.stringify({ message, area }) }
   );
 
-export const submitVoiceComplaint = async (audioBlob: Blob, area?: string) => {
+/**
+ * Step 1 of the voice flow: speech-to-text only. No ticket is created — the
+ * customer reviews/edits the transcript, then calls submitVoiceComplaint().
+ */
+export const transcribeVoiceComplaint = async (audioBlob: Blob) => {
   const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
   const form = new FormData();
   form.append("audio", audioBlob, "recording.webm");
-  if (area) form.append("area", area);
-  const res = await fetch(`${API_BASE_URL}/api/complaints/voice`, {
+  const res = await fetch(`${API_BASE_URL}/api/complaints/voice/transcribe`, {
     method: "POST",
     headers: token ? { Authorization: `Bearer ${token}` } : {},
     body: form,
@@ -526,12 +533,20 @@ export const submitVoiceComplaint = async (audioBlob: Blob, area?: string) => {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(error.detail || `API error ${res.status}`);
   }
-  return res.json() as Promise<{
-    ticket_code: string; ticket_id: string; transcript: string; transcription_engine: string;
+  return res.json() as Promise<{ transcript: string; transcription_engine: string }>;
+};
+
+/** Step 2: submit the confirmed (possibly edited) voice transcript. */
+export const submitVoiceComplaint = (message: string, area?: string) =>
+  apiFetch<{
+    ticket_code: string; ticket_id: string; transcript: string;
     classification: Record<string, unknown>; status: string; reply_text: string;
     reply_audio_base64: string | null; reply_audio_available: boolean;
-  }>;
-};
+  }>("/api/complaints/voice", { method: "POST", body: JSON.stringify({ message, area }) });
+
+/** Withdraw one of your own complaints (only while status is open/auto_resolved). */
+export const deleteComplaint = (id: string) =>
+  apiFetch<{ message: string }>(`/api/complaints/${id}`, { method: "DELETE" });
 
 export const getComplaintTaxonomy = () => apiFetch<Record<string, string[]>>("/api/complaints/taxonomy");
 
