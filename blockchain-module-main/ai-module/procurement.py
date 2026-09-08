@@ -213,7 +213,27 @@ def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
                     WHERE id=:id"""),
             {"id": order_id},
         )
-        db.commit()
+
+    # Log the send so this order appears in the Vendor Communication panel.
+    # Manual / directly-placed orders email the vendor here (not via the n8n
+    # approve flow), so without this row they'd never show up there.
+    db.execute(
+        text("""
+            INSERT INTO vendor_comm_log (id, order_id, channel, status, triggered_by, response_body, sent_at)
+            VALUES (:id, :oid, 'direct-email', :status, :uid, :body, NOW())
+        """),
+        {
+            "id": str(uuid.uuid4()), "oid": order_id,
+            "status": "Sent" if sent else "Failed",
+            "uid": req.triggered_by,
+            "body": (
+                f"Purchase order {order_code} emailed to {item['vendor_email']}"
+                if sent else
+                f"Vendor email for {order_code} could not be sent"
+            ),
+        },
+    )
+    db.commit()
 
     notify_order_created(db, order_code, item["name"], req.trigger_type)
 
@@ -646,7 +666,7 @@ def get_checkins(order_id: str, db: Session = Depends(get_db)):
 # ────────────────────────────────────────────────────────────────────────────
 
 @router.post("/manual-reorder", dependencies=[_pm])
-def manual_reorder(req: ManualReorderRequest, db: Session = Depends(get_db)):
+def manual_reorder(req: ManualReorderRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     item = _get_item(db, req.item_id)
     return create_order(
         CreateOrderRequest(
@@ -654,6 +674,7 @@ def manual_reorder(req: ManualReorderRequest, db: Session = Depends(get_db)):
             quantity     = req.quantity or item["reorder_quantity"],
             unit_price   = req.unit_price,
             trigger_type = "Manual",
+            triggered_by = user["id"],
         ),
         db,
     )

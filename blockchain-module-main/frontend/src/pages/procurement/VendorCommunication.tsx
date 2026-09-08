@@ -14,6 +14,9 @@ const decisionBadge = (order: ProcurementOrder) => {
     return <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-destructive/10 text-destructive"><XCircle size={11} /> Rejected</span>;
   if (order.pm_approval_status === "Approved")
     return <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-warning/10 text-warning"><Clock size={11} /> Awaiting vendor</span>;
+  // Manual / directly-placed orders: no Accept/Reject flow — just an emailed PO.
+  if (order.vendor_email_sent)
+    return <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground"><Mail size={11} /> Emailed</span>;
   return null;
 };
 
@@ -29,7 +32,9 @@ const VendorCommunication = () => {
   const load = useCallback(async () => {
     try {
       const res = await listOrders({ limit: 100 });
-      const withVendorEmail = res.orders.filter((o) => o.vendor_response_token);
+      const withVendorEmail = res.orders.filter(
+        (o) => o.vendor_email_sent || o.vendor_response_token
+      );
       setOrders(withVendorEmail);
       if (withVendorEmail.length > 0) setSelected((prev) => prev || withVendorEmail[0]);
     } catch {
@@ -78,15 +83,15 @@ const VendorCommunication = () => {
       <div>
         <h1 className="text-2xl font-heading font-bold">Vendor Communication</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Every reorder email sent via n8n, and each vendor's Accept/Reject status in
-          near-real time.
+          Every reorder email sent to a vendor — n8n approve-flow orders (with live
+          Accept/Reject status) and manually-placed orders alike.
         </p>
       </div>
 
       {orders.length === 0 ? (
         <div className="glass-card p-10 text-center text-muted-foreground text-sm flex flex-col items-center gap-3">
           <Mail size={28} className="text-primary" />
-          No vendor emails have been sent yet — approve a reorder to see it here.
+          No vendor emails have been sent yet — approve a reorder or place a manual order to see it here.
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -125,7 +130,8 @@ const VendorCommunication = () => {
                     {decisionBadge(selected)}
                     <button
                       onClick={handleResend}
-                      disabled={resending || !!selected.vendor_decision}
+                      disabled={resending || !!selected.vendor_decision || !selected.vendor_response_token}
+                      title={!selected.vendor_response_token ? "Resend is only available for n8n approve-flow orders" : undefined}
                       className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border rounded-lg hover:bg-muted/30 disabled:opacity-50"
                     >
                       {resending ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
