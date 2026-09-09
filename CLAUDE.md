@@ -130,6 +130,7 @@ text-only).
 | Roles, JWT, route guards, who can call what | `RBAC_WIRING.md` |
 | Auto-reorder trigger, PM approval, n8n vendor email, accept/reject | `N8N_AUTOMATION_WIRING.md` |
 | Complaint taxonomy, severity routing, reminder scheduler, STT/TTS/LLM | `VEMA_BACKEND_WIRING.md` |
+| What works in the VEMA pipeline + per-portal flow diagrams (status doc) | `blockchain-module-main/VEMA_PIPELINE.md` |
 | Customer-facing voice/chat portal | `CUSTOMER_PORTAL_WIRING.md` |
 | Frontend routes, pages, design system tokens | `blockchain-module-main/frontend/FRONTEND.md` |
 | Model performance, business rules, setup, test checklist | `README.md` |
