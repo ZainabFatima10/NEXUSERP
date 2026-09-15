@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Bell, Menu } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getNotifications } from "@/services/api";
+import { ROLE_HOME } from "@/components/ProtectedRoute";
 
 interface Props {
   onOpenMobileSidebar: () => void;
@@ -17,7 +18,7 @@ const Topbar = ({ onOpenMobileSidebar, title }: Props) => {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      getNotifications({ unread: true })
+      getNotifications({ unread: true, user_id: user?.id })
         .then((res) => {
           if (!cancelled) setUnread(res.unread_count);
         })
@@ -29,7 +30,7 @@ const Topbar = ({ onOpenMobileSidebar, title }: Props) => {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [user?.id]);
 
   const initials = (user?.name || "Admin")
     .split(" ")
@@ -53,7 +54,7 @@ const Topbar = ({ onOpenMobileSidebar, title }: Props) => {
 
       <div className="flex items-center gap-3 flex-shrink-0">
         <Link
-          to="/admin/notifications"
+          to={`${ROLE_HOME[user?.role ?? "admin"] ?? "/admin"}/notifications`}
           className="relative p-2 rounded-lg hover:bg-muted/50 text-muted-foreground transition-colors"
           aria-label="Notifications"
         >
