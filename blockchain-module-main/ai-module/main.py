@@ -140,3 +140,64 @@ async def confirm_landing(token: str):
     </script>
     </body></html>
     """
+
+
+# Vendor accept/reject landing page (opens from the reorder-approval email's
+# Accept/Reject buttons). A plain <a href> is a GET request — the actual
+# decision endpoint is POST-only (mirrors /confirm/{token} above) — and
+# requiring an explicit click before the POST fires also protects against
+# email/security scanners that silently pre-fetch links.
+@app.get("/api/procurement/vendor-response/{order_id}", response_class=HTMLResponse)
+async def vendor_response_landing(order_id: str, decision: str, token: str):
+    is_accept = decision == "accept"
+    label = "Accept" if is_accept else "Reject"
+    color = "#2e7d5e" if is_accept else "#c62828"
+    icon = "✅" if is_accept else "❌"
+    action_url = f"/api/procurement/vendor-response/{order_id}?decision={decision}&token={token}"
+    return f"""
+    <!DOCTYPE html><html>
+    <head>
+      <title>NEXUS ERP — {label} Order</title>
+      <style>
+        body{{font-family:'DM Sans',Arial,sans-serif;background:#f4f7fb;
+              display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+        .card{{background:#fff;border-radius:16px;padding:48px;max-width:480px;width:90%;
+               box-shadow:0 8px 32px rgba(0,0,0,0.10);text-align:center}}
+        h1{{color:#001F54;font-size:24px;margin-bottom:8px}}
+        p{{color:#555;line-height:1.6;margin-bottom:24px}}
+        button{{background:{color};color:#fff;border:none;border-radius:24px;
+                padding:14px 40px;font-size:16px;font-weight:700;cursor:pointer;
+                transition:opacity 0.2s}}
+        button:hover{{opacity:0.85}}
+        .success{{display:none;color:{color};font-weight:600;margin-top:16px;font-size:18px}}
+        .error{{display:none;color:#c62828;font-weight:600;margin-top:16px}}
+      </style>
+    </head>
+    <body>
+    <div class="card">
+      <h1>NEXUS ERP</h1>
+      <p>Confirm your decision on this purchase order.</p>
+      <button onclick="sendDecision()">{icon} {label} Order</button>
+      <div class="success" id="ok"></div>
+      <div class="error"   id="err">This link is invalid or has already been used.</div>
+    </div>
+    <script>
+    async function sendDecision() {{
+      try {{
+        const res = await fetch('{action_url}', {{method:'POST'}});
+        const data = await res.json();
+        if (res.ok) {{
+          document.getElementById('ok').textContent = data.message || 'Recorded.';
+          document.getElementById('ok').style.display = 'block';
+          document.querySelector('button').style.display = 'none';
+        }} else {{
+          document.getElementById('err').textContent = data.detail || 'Error';
+          document.getElementById('err').style.display = 'block';
+        }}
+      }} catch(e) {{
+        document.getElementById('err').style.display = 'block';
+      }}
+    }}
+    </script>
+    </body></html>
+    """

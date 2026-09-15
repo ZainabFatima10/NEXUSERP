@@ -12,6 +12,7 @@ for SMTP.
 import os
 import httpx
 from dotenv import load_dotenv
+from fastapi.encoders import jsonable_encoder
 
 load_dotenv()
 
@@ -31,7 +32,12 @@ def trigger_vendor_reorder_email(
     an itemized bill + Accept/Reject buttons. Returns
     {status: "Sent"|"Simulated"|"Failed", message_id, response_body}.
     """
-    payload = {
+    # order["id"] is a UUID, invoice/order fields can carry Decimal (NUMERIC
+    # columns) and date (expected_delivery is DATE) — none of those survive
+    # stdlib json.dumps (which is all httpx's json= param does). Unlike
+    # FastAPI's own response path, a manual httpx.post never gets FastAPI's
+    # encoder for free, so sanitize explicitly.
+    payload = jsonable_encoder({
         "order_id":         order["id"],
         "order_code":       order["order_code"],
         "item_name":        order["item_name"],
@@ -45,7 +51,7 @@ def trigger_vendor_reorder_email(
         "accept_url":       accept_url,
         "reject_url":       reject_url,
         "trigger_type":     order["trigger_type"],
-    }
+    })
 
     if not N8N_WEBHOOK_URL:
         print(f"\n[DEV MODE — n8n not configured] Would POST vendor reorder email for "
