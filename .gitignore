@@ -8,6 +8,10 @@ ai-module/data/raw/
 ai-module/data/processed/
 ai-module/data/inventory/current_orders.json
 
+# n8n credential files filled in with real secrets (templates are tracked)
+n8n-workflows/*-credential.json
+!n8n-workflows/*.template.json
+
 # Node / Frontend
 node_modules/
 dist/

@@ -7,6 +7,15 @@ import {
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 
+const CHANNEL_LABELS: Record<string, string> = {
+  "n8n-email": "Reorder Email (Accept/Reject)",
+  "n8n-contract-confirmation": "Contract Confirmation (Bill Copy)",
+  "direct-email": "Purchase Order Email",
+  "dev-console": "Dev Console (simulated)",
+};
+
+const POLL_INTERVAL_MS = 15000;
+
 const decisionBadge = (order: ProcurementOrder) => {
   if (order.vendor_decision === "Accepted")
     return <span className="flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-success/10 text-success"><CheckCircle2 size={11} /> Accepted</span>;
@@ -36,7 +45,14 @@ const VendorCommunication = () => {
         (o) => o.vendor_email_sent || o.vendor_response_token
       );
       setOrders(withVendorEmail);
-      if (withVendorEmail.length > 0) setSelected((prev) => prev || withVendorEmail[0]);
+      // Keep the selected order's reference in sync with the refreshed list
+      // (not just on first load) so a vendor's Accept/Reject — which lands
+      // asynchronously via their own email click — shows up here without a
+      // manual page reload.
+      setSelected((prev) => {
+        if (!prev) return withVendorEmail[0] ?? null;
+        return withVendorEmail.find((o) => o.id === prev.id) ?? prev;
+      });
     } catch {
       toast({ title: "Failed to load orders", variant: "destructive" });
     } finally {
@@ -44,7 +60,11 @@ const VendorCommunication = () => {
     }
   }, [toast]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    const interval = setInterval(load, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [load]);
 
   useEffect(() => {
     if (!selected) return;
@@ -125,6 +145,12 @@ const VendorCommunication = () => {
                     <p className="text-sm text-muted-foreground">
                       {selected.item_name} — {selected.quantity} {selected.unit} to {selected.vendor_name}
                     </p>
+                    {selected.vendor_responded_at && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Vendor {selected.vendor_decision === "Accepted" ? "accepted" : "responded"}{" "}
+                        {new Date(selected.vendor_responded_at).toLocaleString()}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {decisionBadge(selected)}
@@ -154,7 +180,7 @@ const VendorCommunication = () => {
                         <div key={entry.id} className="flex items-center justify-between text-sm bg-muted/30 rounded-lg px-3 py-2">
                           <span className="flex items-center gap-2">
                             <Mail size={14} className="text-muted-foreground" />
-                            {entry.channel}
+                            {CHANNEL_LABELS[entry.channel] ?? entry.channel}
                             <span
                               className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
                                 entry.status === "Sent"

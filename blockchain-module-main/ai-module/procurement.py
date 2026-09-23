@@ -38,7 +38,7 @@ from notification_service import (
     notify_delivery_checkin,
     notify_role,
 )
-from n8n_service import trigger_vendor_reorder_email
+from n8n_service import trigger_vendor_reorder_email, trigger_contract_confirmation_email
 from rbac import require_role, ROLE_PROCUREMENT_MANAGER, get_current_user
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
@@ -958,7 +958,32 @@ def vendor_response(
         notify_role(db, ROLE_PROCUREMENT_MANAGER, "Confirmations", f"Reorder Placed — {order['order_code']}",
                     f"The reorder has been placed — {order['item_name']}, {order['vendor_name']}, "
                     f"{order['quantity']:.0f} {order['unit']}.")
-        return {"message": f"Order {order['order_code']} accepted. Smart contract executed."}
+
+        # Send the vendor a copy of the now-executed smart contract / bill,
+        # confirming the order is locked in. Reuses the same
+        # vendor_response_token (not cleared on accept) for the invoice link —
+        # same token-secured pattern the initial reorder email already uses.
+        from invoice_service import generate_invoice_data
+        confirmed_order = _get_order(db, order_id)
+        invoice = generate_invoice_data(confirmed_order)
+        invoice_pdf_url = f"{BASE_URL}/api/procurement/vendor-invoice/{order_id}?token={token}"
+        confirm_result = trigger_contract_confirmation_email(
+            confirmed_order, invoice, invoice_pdf_url,
+            order["contract_hash"], exec_result["execution_hash"],
+        )
+        db.execute(
+            text("""
+                INSERT INTO vendor_comm_log (id, order_id, channel, status, triggered_by, response_body, sent_at)
+                VALUES (:id, :oid, 'n8n-contract-confirmation', :status, NULL, :body, NOW())
+            """),
+            {
+                "id": str(uuid.uuid4()), "oid": order_id,
+                "status": confirm_result["status"], "body": confirm_result["response_body"],
+            },
+        )
+        db.commit()
+
+        return {"message": f"Order {order['order_code']} accepted. Smart contract executed. Confirmation copy sent to vendor."}
     else:
         reject_contract(order["contract_hash"], contract_data, "Vendor rejected the reorder")
         db.execute(

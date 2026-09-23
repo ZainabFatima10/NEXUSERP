@@ -1,9 +1,17 @@
 # n8n Automation Wiring — Vendor Reorder Email
 
 How the automated <20%-stock reorder flow (Section 3) hands off to n8n for the
-vendor-facing email with Accept/Reject buttons, and how the buttons call back
-into FastAPI. Doesn't touch `contract_service.py` (smart contract lifecycle)
-or `invoice_service.py` (billing) — this only orchestrates around them.
+vendor-facing email with Accept/Reject buttons, how the buttons call back
+into FastAPI, how that decision reflects back into the Vendor Communication
+portal, and how the vendor gets a confirmation copy of the executed smart
+contract once they accept. Doesn't touch `contract_service.py` (smart
+contract lifecycle) or `invoice_service.py` (billing) — this only
+orchestrates around them.
+
+Both n8n workflows are checked into the repo as importable JSON under
+[`n8n-workflows/`](n8n-workflows/) (see that folder's `README.md` for import
+steps) — previously they existed only inside a running container's own
+database.
 
 ## End-to-end flow
 
@@ -50,8 +58,20 @@ or `invoice_service.py` (billing) — this only orchestrates around them.
      - Accept: sign_contract(vendor) + execute_contract() [contract_service.py,
        unmodified] → stage='Order Placed' → notify_role(admin) +
        notify_role(procurement_manager): "The reorder has been placed — …"
+       → POSTs to the *second* webhook (vendor-contract-confirmation) so the
+       vendor gets an emailed copy of the now-executed contract / bill,
+       logged to vendor_comm_log as channel='n8n-contract-confirmation'
      - Reject: reject_contract(...) → stage='Vendor Rejected' → notify both
        roles that manual follow-up is needed
+        │
+        ▼
+8. The Vendor Communication page (frontend, `VendorCommunication.tsx`) polls
+   `GET /api/procurement/orders` every 15s and re-reads
+   `vendor_decision` / `vendor_responded_at` off each order, so the
+   Accepted/Rejected badge and response timestamp update on their own —
+   no manual refresh needed to see the vendor's decision land. The send
+   history panel picks up the new `n8n-contract-confirmation` log entry the
+   same way it already showed the original `n8n-email` entry.
 ```
 
 ## Payload FastAPI sends to n8n (`POST {N8N_WEBHOOK_URL}`)
@@ -75,23 +95,47 @@ or `invoice_service.py` (billing) — this only orchestrates around them.
 }
 ```
 
-Header `X-Webhook-Secret: {N8N_WEBHOOK_SECRET}` is sent if that env var is set.
-**Not yet checked on the n8n side** — the workflow below doesn't validate it.
-Low severity (the webhook can only make this instance send an email; it can't
-mutate any order state — that only happens via the token-secured FastAPI
-endpoints), but add an IF node checking `$json.headers['x-webhook-secret']`
-before the Send Email node if you want to close it off.
+## Payload FastAPI sends to n8n (`POST {N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL}`)
 
-## The n8n workflow — self-hosted, provisioned entirely from the CLI
+Fired once, from `procurement.vendor_response()`'s accept branch, right after
+`execute_contract()` succeeds:
 
-Verified working end-to-end 2026-09-15: real email via Gmail SMTP, vendor
-clicked Accept from their actual inbox, smart contract executed. Two nodes
-(the doc originally specified three — a Respond to Webhook node — but the
-Webhook node's own "When Last Node Finishes" response mode already returns
-the Send Email node's result, so the third node was redundant):
+```json
+{
+  "order_id": "uuid",
+  "order_code": "ORD-ABC123",
+  "item_name": "Distribution Transformers (11kV)",
+  "quantity": 500,
+  "unit": "units",
+  "vendor_name": "Siemens AG",
+  "vendor_email": "orders@siemens.com",
+  "invoice": { /* generate_invoice_data() payload, regenerated post-execution */ },
+  "invoice_pdf_url": "https://.../api/procurement/vendor-invoice/{id}?token=...",
+  "contract_hash": "0x...",
+  "execution_hash": "0x...",
+  "trigger_type": "VEMA-Triggered"
+}
+```
+
+Header `X-Webhook-Secret: {N8N_WEBHOOK_SECRET}` is sent on both webhooks
+whenever that env var is set, and **is now enforced on the n8n side** — both
+workflows' Webhook node uses a Header Auth credential (`Nexus Webhook
+Secret`) whose value must match `N8N_WEBHOOK_SECRET` exactly (previously
+generated but unchecked; see `n8n-workflows/README.md`).
+
+## The n8n workflows — self-hosted, imported from JSON in this repo
+
+Verified working end-to-end 2026-09-15 (real email via Gmail SMTP, vendor
+clicked Accept from their actual inbox, smart contract executed) and
+extended with the contract-confirmation workflow afterward. Each workflow is
+two nodes (the doc originally specified three for the first one — a Respond
+to Webhook node — but the Webhook node's own "When Last Node Finishes"
+response mode already returns the Send Email node's result, so the third
+node was redundant):
 
 1. **Webhook node** (`n8n-nodes-base.webhook`) — `httpMethod: POST`,
-   `path: vendor-reorder-email`, `responseMode: lastNode`.
+   `path: vendor-reorder-email` / `vendor-contract-confirmation`,
+   `responseMode: lastNode`, `authentication: headerAuth`.
 2. **Send Email node** (`n8n-nodes-base.emailSend`, v2.1) — `fromEmail`,
    `toEmail: ={{ $json.body.vendor_email }}` (an n8n Webhook node nests the
    POSTed JSON under `.body`), HTML built from `$json.body.*` fields, SMTP
@@ -100,42 +144,33 @@ the Send Email node's result, so the third node was redundant):
 
 n8n runs self-hosted via `docker-compose.yml` (service `n8n`, container
 `nexus_n8n`, port `5678`, named volume `n8n_data`) — no n8n Cloud account,
-no browser setup wizard. The workflow and its SMTP credential were imported
-straight from JSON via the CLI, entirely without visiting the n8n UI:
-
-```bash
-docker compose up -d n8n
-
-# Credential and workflow JSON both need an explicit "id" field — n8n's
-# import commands don't auto-generate one and the DB insert fails without it.
-docker cp smtp-credential.json nexus_n8n:/tmp/cred.json
-docker exec nexus_n8n n8n import:credentials --input=/tmp/cred.json
-
-docker cp workflow.json nexus_n8n:/tmp/workflow.json
-docker exec nexus_n8n n8n import:workflow --input=/tmp/workflow.json
-docker exec nexus_n8n n8n publish:workflow --id=<workflow id>
-docker restart nexus_n8n   # publish:workflow needs a restart to take effect
-                            # in single-instance (non-queue) mode
-```
+no browser setup wizard. Both workflows and their two credentials live as
+JSON in [`n8n-workflows/`](n8n-workflows/) and import straight from the CLI,
+entirely without visiting the n8n UI — see that folder's `README.md` for the
+full import commands.
 
 The SMTP credential type name is `smtp` with fields `user`, `password`,
 `host`, `port` (587), `secure` (`false` — STARTTLS, not implicit TLS),
 `disableStartTls` (`false`). For Gmail: an
 [App Password](https://myaccount.google.com/apppasswords), not the account
-password (needs 2-Step Verification enabled first).
+password (needs 2-Step Verification enabled first). The Header Auth
+credential type name is `httpHeaderAuth` with fields `name`
+(`X-Webhook-Secret`) and `value` (must match `N8N_WEBHOOK_SECRET`).
 
 ## Environment variables
 
 ```
 N8N_WEBHOOK_URL=http://localhost:5678/webhook/vendor-reorder-email
-N8N_WEBHOOK_SECRET=some-shared-secret   # generated, not yet enforced by n8n — see above
+N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL=http://localhost:5678/webhook/vendor-contract-confirmation
+N8N_WEBHOOK_SECRET=some-shared-secret   # generated AND enforced by n8n's Header Auth credential — see above
 BASE_URL=https://<something>.trycloudflare.com   # see below
 ```
 
-If `N8N_WEBHOOK_URL` is unset, `n8n_service.py` runs in dev mode — it prints
-the payload (including the accept/reject URLs) to the console instead of
-posting, so you can copy-paste them into a browser to exercise the full
-Accept/Reject flow locally without n8n running at all.
+If either webhook URL is unset, `n8n_service.py` runs in dev mode for that
+workflow — it prints the payload (including the accept/reject URLs, or the
+contract/execution hashes) to the console instead of posting, so you can
+copy-paste the accept/reject URLs into a browser to exercise the full
+Accept/Reject/confirmation cycle locally without n8n running at all.
 
 **`BASE_URL` must be a URL the vendor's mail client can actually reach** — the
 Accept/Reject links in the email are built from it. `http://localhost:8000`
@@ -185,6 +220,10 @@ vendor actually clicked a real email — worth re-checking if you touch either p
 
 ## New table — `vendor_comm_log` (`003_add_procurement_approval_workflow.sql`)
 
-One row per email attempt (initial send + every resend), independent of the
-order's current stage, so the Vendor Communication panel can show full send
-history even after the vendor has already responded.
+One row per email attempt, independent of the order's current stage, so the
+Vendor Communication panel can show full send history even after the vendor
+has already responded. `channel` values in use: `direct-email` (manual
+order path), `n8n-email` (reorder Accept/Reject email — initial send and
+every resend), and `n8n-contract-confirmation` (the post-accept smart
+contract / bill copy, one row, fired automatically — no resend button for
+it yet).

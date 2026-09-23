@@ -11,10 +11,12 @@
     volumes:
       - nexus_data:/var/lib/postgresql/data
 
-  # Self-hosted n8n — runs the "vendor reorder email" workflow described in
-  # N8N_AUTOMATION_WIRING.md. FastAPI reaches it at N8N_WEBHOOK_URL
-  # (http://localhost:5678/webhook/vendor-reorder-email); it needs no
-  # account of its own to receive that call.
+  # Self-hosted n8n — runs the two vendor-email workflows described in
+  # N8N_AUTOMATION_WIRING.md and stored under blockchain-module-main/n8n-workflows/:
+  # the reorder Accept/Reject email (N8N_WEBHOOK_URL) and the post-accept
+  # smart-contract confirmation email (N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL).
+  # FastAPI reaches both over the same :5678 webhook endpoint; n8n needs no
+  # account of its own to receive either call.
   n8n:
     image: n8nio/n8n:latest
     container_name: nexus_n8n
