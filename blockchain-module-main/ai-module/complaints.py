@@ -22,6 +22,7 @@ from sqlalchemy import text
 from database import get_db
 from rbac import require_role, get_current_user, ROLE_CUSTOMER, ROLE_CUSTOMER_REP
 from taxonomy import all_categories, subtypes_for, reference_table
+from rag.retrieval import retrieve
 import stt_service
 import tts_service
 import llm_service
@@ -81,6 +82,7 @@ def submit_voice_complaint(req: VoiceComplaintRequest, user: dict = Depends(get_
         "ticket_code": result["ticket_code"],
         "ticket_id": result["ticket_id"],
         "reference_id": result["reference_id"],
+        "related_ticket_reference": result.get("related_ticket_reference"),
         "transcript": text_content,
         "classification": result["classification"],
         "status": result["status"],
@@ -107,6 +109,7 @@ def submit_chat_complaint(req: ChatComplaintRequest, user: dict = Depends(get_cu
         "ticket_code": result["ticket_code"],
         "ticket_id": result["ticket_id"],
         "reference_id": result["reference_id"],
+        "related_ticket_reference": result.get("related_ticket_reference"),
         "classification": result["classification"],
         "status": result["status"],
         "reply_text": reply_text,
@@ -236,6 +239,36 @@ def get_complaint(ticket_id: str, user: dict = Depends(get_current_user), db: Se
         {"id": ticket_id},
     ).mappings().all()
     return {"ticket": _ticket_to_dict(dict(row)), "events": [dict(e) for e in events]}
+
+
+@router.get("/{ticket_id}/similar", dependencies=[_cr])
+def get_similar_resolved_cases(ticket_id: str, db: Session = Depends(get_db)):
+    """
+    Feature D — up to 3 anonymized similar resolved cases for staff, to help
+    resolve faster. Staff-only (customer role can never reach this — the
+    dependency requires ROLE_CUSTOMER_REP, which require_role() also grants
+    to admin, never to a customer). Retrieval only; never shown to customers.
+    """
+    row = db.execute(text("SELECT category, subtype, description FROM complaints WHERE id = :id"), {"id": ticket_id}).mappings().first()
+    if not row:
+        raise HTTPException(404, "Ticket not found")
+
+    results = retrieve(
+        db, f"{row['category']} {row['subtype']} {row['description']}",
+        doc_type="resolved_ticket", top_k=3,
+    )
+    return {
+        "cases": [
+            {
+                "ticket_code": r.metadata.get("ticket_code"),
+                "category": r.category,
+                "summary": r.question,
+                "resolution": r.answer,
+                "score": round(r.score, 3),
+            }
+            for r in results
+        ]
+    }
 
 
 class UpdateComplaintRequest(BaseModel):

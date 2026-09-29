@@ -132,13 +132,58 @@ def create_ticket(
         f"(severity: {classification['severity']}).",
         metadata=classification,
     )
+
+    # RAG Feature D — duplicate/known-issue awareness. Never blocks creation
+    # (the ticket above is already committed) — just links the new one to an
+    # existing open report in the same category+area, if any, so staff see
+    # the relation instead of two independent tickets for one outage.
+    related = _find_duplicate_ticket(db, classification["category"], area, exclude_ticket_id=ticket_id)
+    if related:
+        db.execute(
+            text("UPDATE complaints SET related_ticket_id = :rel WHERE id = :id"),
+            {"rel": related["id"], "id": ticket_id},
+        )
+        _log_event(
+            db, ticket_id, "system_action", "vema",
+            f"Linked to existing open ticket {related['ticket_code']} — same category and area.",
+            metadata={"related_ticket_id": str(related["id"]), "related_ticket_code": related["ticket_code"]},
+        )
     db.commit()
 
     outcome = _route_ticket(db, ticket_id, ticket_code, classification["severity"], classification, customer_name, customer_email)
+    if related:
+        outcome["related_ticket_reference"] = related["reference_id"] or related["ticket_code"]
     return {
         "ticket_id": ticket_id, "ticket_code": ticket_code, "reference_id": reference_id,
         "classification": classification, **outcome,
     }
+
+
+def _find_duplicate_ticket(db: Session, category: str, area: Optional[str], exclude_ticket_id: str) -> Optional[dict]:
+    """
+    Feature D duplicate/known-issue rule (proposed heuristic — flagged for
+    team review, not a precise geo-match): an already-open (status=
+    'escalated') ticket in the SAME category whose free-text `area` field
+    overlaps this one's, checked case-insensitively in both directions
+    ('G-11' should match 'G-11 Islamabad' and vice versa) since `area` has
+    no controlled vocabulary in this schema — it's whatever the customer
+    typed. Structured DB lookup only; no embedding similarity fallback on
+    the description was added given the time budget for this pass (the
+    spec allows this as a secondary check, not a required one).
+    """
+    if not area or not area.strip():
+        return None
+    row = db.execute(
+        text("""
+            SELECT id, ticket_code, reference_id, area FROM complaints
+            WHERE category = :category AND status = 'escalated' AND id != :exclude
+              AND area IS NOT NULL AND area != ''
+              AND (area ILIKE '%' || :area || '%' OR :area ILIKE '%' || area || '%')
+            ORDER BY created_at DESC LIMIT 1
+        """),
+        {"category": category, "exclude": exclude_ticket_id, "area": area.strip()},
+    ).mappings().first()
+    return dict(row) if row else None
 
 
 def _route_ticket(db: Session, ticket_id: str, ticket_code: str, severity: str, classification: dict,
@@ -213,6 +258,14 @@ def _resolve(db: Session, ticket_id: str, ticket_code: str, resolution: str, res
     db.commit()
     if customer_email:
         send_customer_resolution_email(customer_email, customer_name or "Customer", ticket_code, resolution)
+
+    # RAG Feature D — keep the resolved_ticket corpus roughly current between
+    # full reindexes. Wrapped so a RAG failure can never block a resolution.
+    try:
+        from rag.resolved_tickets import index_single_resolved_ticket
+        index_single_resolved_ticket(db, ticket_id)
+    except Exception as e:
+        print(f"[WARN] non-fatal: RAG incremental indexing failed for {ticket_code}: {e}")
 
 
 def cr_resolve_ticket(db: Session, ticket_id: str, resolution: str, resolved_by_user_id: str, actor: str = "customer_rep"):
