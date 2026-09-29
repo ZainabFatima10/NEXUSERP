@@ -9,16 +9,18 @@ Windows Application Control blocks torch.dll outright (OSError WinError
 choice, but Mistral's paid tier wasn't workable for the team, so the
 provider priority is now:
 
-  1. Gemini embeddings (`GEMINI_API_KEY`, `text-embedding-004`, 768-dim) —
-     free tier, no card required. NOT LIVE-TESTED in this environment (no
-     key configured here) — coded and disclosed as such, same status every
-     other "add your own key" integration in this codebase carries until
-     someone actually runs it with a real key.
+  1. Gemini embeddings (`GEMINI_API_KEY`, `gemini-embedding-001`) — free
+     tier, no card required. Live-verified against a real key 2026-09-29:
+     `text-embedding-004` (the original plan) has been retired from the
+     API; `gemini-embedding-001` is its replacement but is natively
+     3072-dim, so every request below passes `outputDimensionality: 768`
+     (a genuinely supported Matryoshka-style truncation, confirmed via
+     direct testing to return exactly 768 values) to match this schema.
   2. scikit-learn HashingVectorizer (768-dim, matched to Gemini's width so
      the schema never needs to change again just because the provider
      did) — stateless, no fitted vocabulary, no model download, no torch.
-     This is the path every test and the eval script in this repo actually
-     exercises.
+     Used automatically if GEMINI_API_KEY is unset, or as a per-call
+     fallback if a Gemini request fails.
 
 EMBEDDING_DIM (768) MUST match migration 008's `vector(768)` column. If you
 introduce a third backend with a different output width, you must widen the
@@ -34,12 +36,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 GEMINI_BATCH_EMBED_URL_TEMPLATE = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
 )
 
-EMBEDDING_DIM = 768  # Gemini text-embedding-004's native width — see module docstring
+EMBEDDING_DIM = 768  # requested via outputDimensionality below — see module docstring
 EMBEDDING_BACKEND = "gemini" if GEMINI_API_KEY else "hashing"
 
 _hashing_vectorizer = None
@@ -70,7 +72,14 @@ def _embed_with_gemini(texts: List[str]) -> List[List[float]]:
     resp = httpx.post(
         url,
         params={"key": GEMINI_API_KEY},
-        json={"requests": [{"model": model_path, "content": {"parts": [{"text": t}]}} for t in texts]},
+        json={"requests": [
+            {
+                "model": model_path,
+                "content": {"parts": [{"text": t}]},
+                "outputDimensionality": EMBEDDING_DIM,
+            }
+            for t in texts
+        ]},
         timeout=30.0,
     )
     resp.raise_for_status()

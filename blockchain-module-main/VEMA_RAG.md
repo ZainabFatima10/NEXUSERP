@@ -88,9 +88,79 @@ secondary option for anyone who already has that key).
 
 | | Condition | What |
 |---|---|---|
-| **Primary** | `GEMINI_API_KEY` set | Gemini's embeddings API (`text-embedding-004`, 768-dim) + `gemini-2.0-flash` for chat/classification/intent. **Coded but not live-tested** — no key in this environment. |
-| **Secondary** | only `MISTRAL_API_KEY` set | Mistral (`mistral-small-latest` chat) — unchanged from before, still untested live for the same reason. |
-| **Fallback** | neither set (this environment's actual state) | scikit-learn `HashingVectorizer` (768-dim, matched to Gemini's width, bigrams, L2-normalized) for embeddings; the deterministic keyword classifier + canned replies for chat. **This is the path every test, the eval script, and the live demo actually exercise.** |
+| **Primary** | `GEMINI_API_KEY` set | Gemini's embeddings API (`gemini-embedding-001` truncated to 768-dim via `outputDimensionality`) + `gemini-2.5-flash-lite` for chat/classification/intent. **Live-verified against a real key 2026-09-29** (see below). |
+| **Secondary** | only `MISTRAL_API_KEY` set | Mistral (`mistral-small-latest` chat) — unchanged from before, still untested live (no Mistral key available). |
+| **Fallback** | either provider's call fails (rate limit, network) or neither key is set | scikit-learn `HashingVectorizer` (768-dim) for embeddings; the deterministic keyword classifier + canned replies for chat. Exercised automatically and correctly every time Gemini's free-tier quota ran out during live testing — see "Live-testing the real Gemini key" below. |
+
+### Model names move fast on this API — what actually worked (2026-09-29)
+
+The originally-coded defaults (`gemini-2.0-flash`, `text-embedding-004`) no
+longer exist on the API at all (`404`) — both were retired after this
+project's knowledge cutoff. Diagnosed live via `GET /v1beta/models?key=...`
+and confirmed corrected:
+
+- **Chat/classification**: tried `gemini-flash-latest` (timed out twice),
+  `gemini-2.5-flash` (`404`, "no longer available to new users, use
+  gemini-3.8-flash"), `gemini-3.8-flash` (`503`, "high demand"). Settled on
+  **`gemini-2.5-flash-lite`** — responded reliably in both plain-text and
+  JSON mode.
+- **Embeddings**: `text-embedding-004` is retired; its replacement
+  **`gemini-embedding-001`** is natively **3072-dim**, not 768 — would have
+  silently broken the `vector(768)` schema. Fix: pass
+  `"outputDimensionality": 768` in each request object (confirmed via a
+  direct test to return exactly 768 values, on both the singular
+  `:embedContent` and the batch `:embedContent`s endpoints) — a genuinely
+  supported Matryoshka-style truncation, not a workaround. No new migration
+  was needed.
+
+If these stop working again, re-run `GET /v1beta/models?key=<your key>` to
+see what's current before guessing a name.
+
+### Live-testing the real Gemini key — free tier is capped at 20 requests/day per model
+
+Once a real key was added, live end-to-end testing (`classify_complaint`,
+`generate_chat_reply`, `classify_intent`, `/api/rag/query`, embedding a
+23-document seed corpus + reindexing the category KB and resolved tickets)
+worked correctly — until Gemini started returning `429`s. The raw error body
+identifies the quota precisely:
+
+```
+quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+quotaValue: "20"   (model: gemini-2.5-flash-lite)
+```
+
+This project's free tier allows only **20 requests/day per model** — enough
+to prove the integration works, not enough for sustained real usage or a
+long testing session. Two things worth knowing if you hit this:
+1. It resets daily; a lower-traffic demo (a handful of live calls) stays
+   under it.
+2. Every fallback held up correctly under it: `chat_json`/`chat_text`
+   return `None` on any failure (never raise), and every caller's dev-mode
+   fallback took over cleanly and instantly — the full pytest suite (see
+   below) and a burst of manual `/api/complaints/chat` calls all completed
+   successfully even while `429`s were firing, because they use the
+   *actual ticket_code*, not a network response.
+3. Raising this needs a Google Cloud billing account attached to the
+   project (still free-tier pricing, but unlocks the standard, much higher
+   free-tier RPD) — outside the scope of a code change.
+
+### A hallucination a live LLM reply caught (and fixed)
+
+`generate_chat_reply()`'s prompt told Gemini to "let them know it's been
+recorded as a ticket" but never gave it the real ticket code — with a real
+model actually generating prose (rather than the old dev-mode template),
+it predictably **invented a plausible-looking ticket number** ("ticket
+#12345") that had nothing to do with the real one. This is exactly the
+"no fabricated data presented as real" failure mode the project's
+guardrails exist to catch, and it only surfaces once a real LLM is in the
+loop — no dev-mode fallback or hashing-embedding test could have found it.
+
+Fix: the frontend (`CustomerPortal.tsx`) already renders the real
+`ticket_code` as its own badge, independent of the chat bubble text, so the
+reply text never needed to state one. `_CHAT_SYSTEM_PROMPT` in
+`llm_service.py` now explicitly forbids stating, inventing, or guessing any
+ticket number — confirmed fixed by re-running the same complaint text
+several times post-fix.
 
 `rag_documents.embedding` is `vector(768)` (migration 008 — widened from
 007's `vector(512)` when the primary provider changed, wiping the then-23-
@@ -130,6 +200,8 @@ model wouldn't have this specific failure mode at all.
 `python -m rag.eval.run_eval` against `rag/eval/eval_set.jsonl` (12
 paraphrased in-domain queries, 5 out-of-domain):
 
+**Hashing fallback** (no API key / Gemini unavailable):
+
 ```
 hit@1: 6/12 (50%)
 hit@3: 8/12 (67%)
@@ -138,20 +210,30 @@ groundedness-consistency (in-domain): 12/12 (100%)
 no-answer precision (out-of-domain):  4/5 (80%)
 ```
 
-(Re-measured after the 512→768-dim widening for the Gemini/hashing provider
-swap — hit@1 improved from 33%→50% purely from fewer hash collisions at the
-wider dimension; hit@3/5 and no-answer precision unchanged.)
+**Real Gemini embeddings** (`gemini-embedding-001`, truncated to 768-dim),
+measured 2026-09-29 against the same 23-document corpus + eval set:
 
-Reported as measured, not claimed as good — this is the honest ceiling of a
-term-hashing embedding on a 23-document corpus. The remaining misses at k=5
-are genuine lexical-overlap failures (e.g. "settle my bill" shares no word
-root with "pay"); the 1 false positive ("recommend a good restaurant
-nearby") slipped past the lexical gate on a coincidentally shared common
-word. A real semantic embedding model (Gemini's or Mistral's embeddings
-API, or sentence-transformers on a machine without this environment's DLL
-block) would be expected to substantially improve both numbers — this is a
-property of the embedding backend, not the retrieval/generation pipeline
-wrapped around it, which behaves correctly given its input.
+```
+hit@1: 8/12 (67%)
+hit@3: 9/12 (75%)
+hit@5: 9/12 (75%)
+groundedness-consistency (in-domain): 12/12 (100%)
+no-answer precision (out-of-domain):  4/5 (80%)
+```
+
+Confirms the prediction below: real semantic embeddings meaningfully
+improve retrieval (hit@1 50%→67%) without changing groundedness or
+no-answer precision, which are governed by the lexical-overlap gate and
+generation logic, not the embedding backend. The one remaining false
+positive ("recommend a good restaurant nearby") still slips past the
+lexical gate on a coincidentally shared common word — a lexical-overlap
+gate weakness, not an embedding-quality one, and unaffected by the
+provider swap. Also observed directly (not part of the scored eval): a
+genuinely out-of-domain query ("what is the capital of France") that used
+to score *higher* than a real billing match under hashing (0.382 vs 0.092)
+now scores far below any real match (below the lexical gate's threshold
+entirely) under real Gemini embeddings — the false-positive risk described
+below is specific to the hashing fallback.
 
 ## Two intent-routing bugs a live test caught (and fixed)
 
@@ -283,8 +365,8 @@ python -m rag.eval.run_eval
 
 ```
 GEMINI_API_KEY=                          # free, no card — https://aistudio.google.com/apikey
-GEMINI_MODEL=gemini-2.0-flash
-GEMINI_EMBEDDING_MODEL=text-embedding-004
+GEMINI_MODEL=gemini-2.5-flash-lite       # verified working live 2026-09-29 — see "Model names move fast" above
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 MISTRAL_API_KEY=                         # secondary, only used if GEMINI_API_KEY is unset
 MISTRAL_MODEL=mistral-small-latest
 RAG_TOP_K=5
@@ -294,19 +376,16 @@ RAG_INDEX_RESOLVED_TICKETS=true          # on because the PII scrub tests pass
 
 ## What wasn't fully verified
 
-- The Gemini backend path (chat, JSON-mode classification/intent, and
-  `text-embedding-004` embeddings via `llm_client.py`/`rag/embeddings.py`)
-  — coded against Gemini's documented request/response shape, never
-  exercised against a real key in this environment. Same disclosed status
-  Mistral's calls always had.
-- The Mistral secondary path — same reason, no key configured here either.
-  The keyword/hashing fallback path this repo actually runs on (and every
-  test in this suite exercises) is fully tested.
+- The Mistral secondary path — no Mistral key was ever available to test
+  against; the Gemini primary and the keyword/hashing fallback are both now
+  live-verified (see above).
 - XLSX ingestion's `openpyxl` path — the reader is written and the "not
   installed" skip message is real, but no `.xlsx` sample was ingested live
   in this pass (CSV/JSON/JSONL all were).
 - Frontend admin page for `/api/rag/*` — see `FRONTEND.md` for what shipped
-  and what's still a stub.
+  and what's still a stub. Backend behind it (`/api/rag/query`,
+  `/api/rag/stats`, `/api/rag/reindex`, ingestion) is live-verified via
+  direct API calls with a real Gemini key.
 
 ## A migration gotcha this pass re-triggered
 

@@ -16,10 +16,9 @@ Gemini's request/response shape is genuinely different from Mistral's
 `parts` with a separate top-level `systemInstruction`) — normalized here
 behind chat_text()/chat_json() so callers never see either shape directly.
 
-NOT LIVE-TESTED against a real Gemini key in this environment (none
-configured here) — same disclosed status Mistral's calls always had. Verify
-against a real key before treating this path as proven; py_compile and the
-existing dev-mode (PROVIDER == "none") behavior are what's actually checked.
+Live-verified against a real Gemini key 2026-09-29: chat_text() and
+chat_json() (JSON mode) both confirmed working on gemini-2.5-flash-lite.
+Mistral's path remains untested (no Mistral key available).
 """
 import os
 import json
@@ -30,7 +29,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+# gemini-2.0-flash no longer exists on this API as of live-testing against a
+# real key (2026-09-29) — gemini-2.5-flash-lite is the model that actually
+# responded reliably then (gemini-flash-latest and gemini-3.8-flash both
+# 503'd as overloaded). This API's model lineup moves fast; if this default
+# stops working, GET /v1beta/models?key=... to see what's current.
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")

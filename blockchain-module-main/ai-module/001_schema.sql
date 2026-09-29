@@ -196,13 +196,16 @@ CREATE INDEX IF NOT EXISTS idx_inventory_status ON inventory_items(status);
 -- ============================================================
 -- SEED: Vendors
 -- ============================================================
+-- Vendor emails point to a real inbox (ayeshat157@gmail.com) instead of
+-- fake company domains so the n8n reorder/contract-confirmation flow can
+-- actually be demoed end-to-end with real accept/reject clicks.
 INSERT INTO vendors (id, name, email, country) VALUES
-  ('11111111-0000-0000-0000-000000000001', 'Siemens AG',      'orders@siemens.com',  'Germany'),
-  ('11111111-0000-0000-0000-000000000002', 'ABB Ltd',         'orders@abb.com',      'Switzerland'),
-  ('11111111-0000-0000-0000-000000000003', 'Nexans',          'orders@nexans.com',   'France'),
-  ('11111111-0000-0000-0000-000000000004', 'NGK Insulators',  'orders@ngk.com',      'Japan'),
-  ('11111111-0000-0000-0000-000000000005', 'Schneider',       'orders@schneider.com','France'),
-  ('11111111-0000-0000-0000-000000000006', 'Prysmian Group',  'orders@prysmian.com', 'Italy')
+  ('11111111-0000-0000-0000-000000000001', 'Siemens AG',      'ayeshat157@gmail.com',  'Germany'),
+  ('11111111-0000-0000-0000-000000000002', 'ABB Ltd',         'ayeshat157@gmail.com',  'Switzerland'),
+  ('11111111-0000-0000-0000-000000000003', 'Nexans',          'ayeshat157@gmail.com',  'France'),
+  ('11111111-0000-0000-0000-000000000004', 'NGK Insulators',  'ayeshat157@gmail.com',  'Japan'),
+  ('11111111-0000-0000-0000-000000000005', 'Schneider',       'ayeshat157@gmail.com',  'France'),
+  ('11111111-0000-0000-0000-000000000006', 'Prysmian Group',  'ayeshat157@gmail.com',  'Italy')
 ON CONFLICT DO NOTHING;
 
 -- ============================================================
