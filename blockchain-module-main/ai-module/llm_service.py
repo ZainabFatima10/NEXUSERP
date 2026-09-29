@@ -14,6 +14,7 @@ import httpx
 from dotenv import load_dotenv
 
 from taxonomy import TAXONOMY, default_severity_for, all_categories, subtypes_for
+from echo_guard import strip_echo
 
 load_dotenv()
 
@@ -205,14 +206,27 @@ def attempt_auto_resolution(category: str, subtype: str, description: str) -> di
 
 _CHAT_SYSTEM_PROMPT = """You are VEMA, a helpful voice/chat assistant for a
 Pakistani electricity utility's customers. Keep replies short (1-3 sentences),
-empathetic, and in English only. You are logging a complaint — acknowledge
-what the customer said and let them know it's been recorded as a ticket."""
+empathetic, and in English only. You are logging a complaint. Respond to
+what the customer needs next — do not repeat, quote, or paraphrase their
+own words back to them. Never open a reply with phrases like "you said",
+"I heard", "so you're saying", or "if I understand" — state the next step or
+answer directly. Let them know it's been recorded as a ticket."""
+
+_ECHO_RETRY_NOTICE = (
+    "\nIMPORTANT: a previous attempt at this reply incorrectly repeated the "
+    "customer's own words back to them. Do not do that — respond with only "
+    "new content, no restatement of what they said."
+)
 
 
-def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None) -> str:
-    if not LLM_AVAILABLE:
-        suffix = f" Your ticket reference is {ticket_code}." if ticket_code else ""
-        return f"Thanks — I've logged your complaint.{suffix} Our team will follow up as needed."
+def _fallback_chat_reply(ticket_code: Optional[str]) -> str:
+    suffix = f" Your ticket reference is {ticket_code}." if ticket_code else ""
+    return f"Thanks — I've logged your complaint.{suffix} Our team will follow up as needed."
+
+
+def _call_chat_completion(customer_message: str, strict: bool = False) -> Optional[str]:
+    """Returns the raw Mistral reply, or None on any failure (never raises)."""
+    system_prompt = _CHAT_SYSTEM_PROMPT + (_ECHO_RETRY_NOTICE if strict else "")
     try:
         resp = httpx.post(
             MISTRAL_URL,
@@ -220,7 +234,7 @@ def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None
             json={
                 "model": MISTRAL_MODEL,
                 "messages": [
-                    {"role": "system", "content": _CHAT_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": customer_message},
                 ],
                 "temperature": 0.4,
@@ -231,5 +245,33 @@ def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None
         return resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"[WARN] Mistral chat reply failed ({e})")
-        suffix = f" Your ticket reference is {ticket_code}." if ticket_code else ""
-        return f"Thanks — I've logged your complaint.{suffix} Our team will follow up as needed."
+        return None
+
+
+def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None) -> str:
+    """
+    Returns a reply that never opens by restating customer_message (Feature
+    A) — enforced by the system prompt, with echo_guard.strip_echo() as a
+    safety net that survives prompt drift. Never raises; always returns
+    something speakable.
+    """
+    fallback = _fallback_chat_reply(ticket_code)
+    if not LLM_AVAILABLE:
+        return fallback  # fixed acknowledgement, never echoes by construction
+
+    reply = _call_chat_completion(customer_message)
+    if reply is None:
+        return fallback
+
+    cleaned, fired = strip_echo(reply, customer_message)
+    if fired:
+        print("[WARN] echo-guard stripped an echoed prefix from VEMA's chat reply")
+        if not cleaned:
+            # The whole reply was an echo — one stricter regeneration attempt.
+            retry = _call_chat_completion(customer_message, strict=True)
+            cleaned = ""
+            if retry:
+                cleaned, _ = strip_echo(retry, customer_message)
+            if not cleaned:
+                cleaned = fallback
+    return cleaned
