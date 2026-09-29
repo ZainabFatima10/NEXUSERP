@@ -1,29 +1,28 @@
 """
 NEXUS ERP — RAG Embeddings (Feature C)
 
-Decision, made by testing rather than assuming (see VEMA_RAG.md "Embedding
-model" for the write-up): a local sentence-transformers model was the
-original plan, but `sentence-transformers`/`torch` cannot load on this
-machine — Windows Application Control blocks torch.dll outright
-(OSError WinError 4551), not a pip/version problem. Two backends instead,
-selected the same way every other external-API dependency in this codebase
-already is (MISTRAL_API_KEY set -> real thing; unset -> a deterministic
-local fallback that keeps the whole pipeline testable):
+Decision history, made by testing rather than assuming (see VEMA_RAG.md
+"Embedding model"): a local sentence-transformers model was the original
+plan, but `sentence-transformers`/`torch` cannot load on this machine —
+Windows Application Control blocks torch.dll outright (OSError WinError
+4551), not a pip/version problem. Mistral's embedding API was the next
+choice, but Mistral's paid tier wasn't workable for the team, so the
+provider priority is now:
 
-  - Mistral embeddings API (`mistral-embed`, 1024-dim) when MISTRAL_API_KEY
-    is set. Coded but NOT live-tested in this environment (no key here) —
-    flagged honestly rather than claimed as verified.
-  - scikit-learn HashingVectorizer (512-dim) otherwise — no fitted
-    vocabulary to persist (stateless, deterministic per input text), no
-    torch, no model download. This is the path actually exercised by every
-    test and eval script in this repo. Weaker than real semantic embeddings
-    (term-hashing, not meaning) — a legitimate but disclosed dev-mode
-    fallback, same spirit as llm_service._keyword_classify.
+  1. Gemini embeddings (`GEMINI_API_KEY`, `text-embedding-004`, 768-dim) —
+     free tier, no card required. NOT LIVE-TESTED in this environment (no
+     key configured here) — coded and disclosed as such, same status every
+     other "add your own key" integration in this codebase carries until
+     someone actually runs it with a real key.
+  2. scikit-learn HashingVectorizer (768-dim, matched to Gemini's width so
+     the schema never needs to change again just because the provider
+     did) — stateless, no fitted vocabulary, no model download, no torch.
+     This is the path every test and the eval script in this repo actually
+     exercises.
 
-EMBEDDING_DIM (512) MUST match migration 007's `vector(512)` column. If you
-switch to the Mistral backend (1024-dim) or a real sentence-transformers
-model on a machine without this environment's DLL block, you must widen the
-column and re-ingest everything — see 007's comment block.
+EMBEDDING_DIM (768) MUST match migration 008's `vector(768)` column. If you
+introduce a third backend with a different output width, you must widen the
+column again and re-ingest everything — see 008's comment block.
 """
 import os
 from functools import lru_cache
@@ -34,12 +33,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-RAG_EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "mistral-embed")
-EMBEDDING_DIM = 512  # HashingVectorizer output width — see module docstring
-MISTRAL_EMBED_URL = "https://api.mistral.ai/v1/embeddings"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+GEMINI_BATCH_EMBED_URL_TEMPLATE = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
+)
 
-EMBEDDING_BACKEND = "mistral" if MISTRAL_API_KEY else "hashing"
+EMBEDDING_DIM = 768  # Gemini text-embedding-004's native width — see module docstring
+EMBEDDING_BACKEND = "gemini" if GEMINI_API_KEY else "hashing"
 
 _hashing_vectorizer = None
 
@@ -63,29 +64,31 @@ def _embed_with_hashing(texts: List[str]) -> List[List[float]]:
     return matrix.toarray().tolist()
 
 
-def _embed_with_mistral(texts: List[str]) -> List[List[float]]:
+def _embed_with_gemini(texts: List[str]) -> List[List[float]]:
+    url = GEMINI_BATCH_EMBED_URL_TEMPLATE.format(model=GEMINI_EMBEDDING_MODEL)
+    model_path = f"models/{GEMINI_EMBEDDING_MODEL}"
     resp = httpx.post(
-        MISTRAL_EMBED_URL,
-        headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-        json={"model": RAG_EMBEDDING_MODEL, "input": texts},
+        url,
+        params={"key": GEMINI_API_KEY},
+        json={"requests": [{"model": model_path, "content": {"parts": [{"text": t}]}} for t in texts]},
         timeout=30.0,
     )
     resp.raise_for_status()
-    data = resp.json()["data"]
-    return [row["embedding"] for row in data]
+    embeddings = resp.json()["embeddings"]
+    return [e["values"] for e in embeddings]
 
 
 def embed_texts(texts: List[str]) -> List[List[float]]:
     """Returns one embedding vector per input text, in order. Never raises —
-    falls back to the hashing backend if the Mistral call fails, so a flaky
+    falls back to the hashing backend if the Gemini call fails, so a flaky
     network never breaks ingestion or retrieval."""
     if not texts:
         return []
-    if EMBEDDING_BACKEND == "mistral":
+    if EMBEDDING_BACKEND == "gemini":
         try:
-            return _embed_with_mistral(texts)
+            return _embed_with_gemini(texts)
         except Exception as e:
-            print(f"[WARN] Mistral embeddings failed ({e}), falling back to local hashing embeddings")
+            print(f"[WARN] Gemini embeddings failed ({e}), falling back to local hashing embeddings")
     return _embed_with_hashing(texts)
 
 

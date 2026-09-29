@@ -23,7 +23,8 @@ that code already owned.
         │
         ▼
 2. rag/intent.py classifies: complaint_intake | information_question | smalltalk
-   (keyword heuristic in dev-mode; Mistral strict-JSON when configured)
+   (keyword heuristic in dev-mode; strict-JSON via llm_client.py — Gemini,
+   then Mistral — when a provider is configured)
         │
         ├── complaint_intake  → unchanged: POST /api/complaints/chat|voice
         │                        (vema_orchestrator.create_ticket — see step 5)
@@ -36,9 +37,10 @@ that code already owned.
    then a lexical-overlap gate (see "A gap the eval script caught" below)
         │
         ▼
-4. rag/generation.py: Mistral answers ONLY from the retrieved Q&A pairs
-   (dev-mode: returns the top match's stored answer verbatim — still
-   genuinely grounded, just no LLM synthesis) → echo_guard.strip_echo()
+4. rag/generation.py: the configured provider (llm_client.py) answers ONLY
+   from the retrieved Q&A pairs (dev-mode: returns the top match's stored
+   answer verbatim — still genuinely grounded, just no LLM synthesis) →
+   echo_guard.strip_echo()
    (Feature A) → honest "I don't know, want to file a complaint?" if
    nothing cleared the relevance bar
         │
@@ -48,7 +50,7 @@ that code already owned.
 5. Inside create_ticket() (complaint_intake path), RAG assists three points
    without ever writing the ticket itself:
      - rag/category_kb.py's taxonomy-derived documents can few-shot-ground
-       Mistral's category call (LLM path only — the dev-mode keyword
+       the LLM category call (LLM path only — the dev-mode keyword
        classifier doesn't need this)
      - taxonomy.py's required_fields drive which field to ask for next
      - _find_duplicate_ticket() links a new ticket to an already-open one
@@ -57,10 +59,11 @@ that code already owned.
    pre-existing deterministic code.
 ```
 
-## Embedding model — a decision made by testing, not assumed
+## LLM / embedding provider — two pivots, both made by testing, not assumed
 
-The plan was a local multilingual `sentence-transformers` model
-(`paraphrase-multilingual-MiniLM-L12-v2`). Testing it on this machine:
+**Pivot 1 — embeddings, torch blocked.** The plan was a local multilingual
+`sentence-transformers` model (`paraphrase-multilingual-MiniLM-L12-v2`).
+Testing it on this machine:
 
 ```
 OSError: [WinError 4551] An Application Control policy has blocked this
@@ -72,19 +75,29 @@ version problem, a system security policy this session has no business
 overriding. `torch`/`sentence-transformers`/`transformers` were installed,
 confirmed unusable, and uninstalled again.
 
-Two backends instead, selected the same way every other external-API
-dependency in this codebase already is:
+**Pivot 2 — Mistral wasn't a workable free option for the team.** The
+initial design used Mistral for both chat completions and embeddings
+(reusing `MISTRAL_API_KEY`). The team found Mistral's tier requirements
+weren't actually free for this use — swapped to **Gemini** (Google AI
+Studio, `https://aistudio.google.com/apikey`) as the primary provider,
+genuinely free with no card required. `llm_client.py` is the one shared
+module both `llm_service.py` and `rag/`'s intent/generation code call
+through, so this swap happened in one place: **Gemini → Mistral → dev-mode
+keyword/canned fallback**, in that priority order (Mistral stays as a
+secondary option for anyone who already has that key).
 
 | | Condition | What |
 |---|---|---|
-| **Primary** | `MISTRAL_API_KEY` set | Mistral's embeddings API (`mistral-embed`, 1024-dim). **Coded but not live-tested** — no key in this environment. |
-| **Fallback** | unset (this environment's actual state) | scikit-learn `HashingVectorizer` (512-dim, bigrams, L2-normalized). Stateless — no fitted vocabulary to persist, no model download, no torch. **This is the path every test, the eval script, and the live demo actually exercise.** |
+| **Primary** | `GEMINI_API_KEY` set | Gemini's embeddings API (`text-embedding-004`, 768-dim) + `gemini-2.0-flash` for chat/classification/intent. **Coded but not live-tested** — no key in this environment. |
+| **Secondary** | only `MISTRAL_API_KEY` set | Mistral (`mistral-small-latest` chat) — unchanged from before, still untested live for the same reason. |
+| **Fallback** | neither set (this environment's actual state) | scikit-learn `HashingVectorizer` (768-dim, matched to Gemini's width, bigrams, L2-normalized) for embeddings; the deterministic keyword classifier + canned replies for chat. **This is the path every test, the eval script, and the live demo actually exercise.** |
 
-`rag_documents.embedding` is `vector(512)` (migration 007) to match the
-tested fallback. Switching backends to a different output width means
-`ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(<dim>)` and a
-full re-ingest — the schema doesn't try to support two dimensions in one
-column.
+`rag_documents.embedding` is `vector(768)` (migration 008 — widened from
+007's `vector(512)` when the primary provider changed, wiping the then-23-
+document corpus and requiring a re-ingest since pgvector enforces dimension
+per column). Introducing a third backend with yet another output width
+means widening again and re-ingesting — the schema doesn't try to support
+two dimensions in one column.
 
 ## A gap the eval script caught: cosine similarity alone isn't enough
 
@@ -118,23 +131,27 @@ model wouldn't have this specific failure mode at all.
 paraphrased in-domain queries, 5 out-of-domain):
 
 ```
-hit@1: 4/12 (33%)
+hit@1: 6/12 (50%)
 hit@3: 8/12 (67%)
 hit@5: 8/12 (67%)
 groundedness-consistency (in-domain): 12/12 (100%)
 no-answer precision (out-of-domain):  4/5 (80%)
 ```
 
+(Re-measured after the 512→768-dim widening for the Gemini/hashing provider
+swap — hit@1 improved from 33%→50% purely from fewer hash collisions at the
+wider dimension; hit@3/5 and no-answer precision unchanged.)
+
 Reported as measured, not claimed as good — this is the honest ceiling of a
-term-hashing embedding on a 23-document corpus. The 4 misses at k=5 are
-genuine lexical-overlap failures (e.g. "settle my bill" shares no word root
-with "pay"); the 1 false positive ("recommend a good restaurant nearby")
-slipped past the lexical gate on a coincidentally shared common word. A real
-semantic embedding model (Mistral's API, or sentence-transformers on a
-machine without this environment's DLL block) would be expected to
-substantially improve both numbers — this is a property of the embedding
-backend, not the retrieval/generation pipeline wrapped around it, which
-behaves correctly given its input.
+term-hashing embedding on a 23-document corpus. The remaining misses at k=5
+are genuine lexical-overlap failures (e.g. "settle my bill" shares no word
+root with "pay"); the 1 false positive ("recommend a good restaurant
+nearby") slipped past the lexical gate on a coincidentally shared common
+word. A real semantic embedding model (Gemini's or Mistral's embeddings
+API, or sentence-transformers on a machine without this environment's DLL
+block) would be expected to substantially improve both numbers — this is a
+property of the embedding backend, not the retrieval/generation pipeline
+wrapped around it, which behaves correctly given its input.
 
 ## Two intent-routing bugs a live test caught (and fixed)
 
@@ -265,7 +282,11 @@ python -m rag.eval.run_eval
 ## Config (`ai-module/env.example`)
 
 ```
-RAG_EMBEDDING_MODEL=mistral-embed        # only used if MISTRAL_API_KEY is set
+GEMINI_API_KEY=                          # free, no card — https://aistudio.google.com/apikey
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_EMBEDDING_MODEL=text-embedding-004
+MISTRAL_API_KEY=                         # secondary, only used if GEMINI_API_KEY is unset
+MISTRAL_MODEL=mistral-small-latest
 RAG_TOP_K=5
 RAG_MIN_SIMILARITY=0.05                  # calibrated for the hashing fallback — raise a lot for real embeddings
 RAG_INDEX_RESOLVED_TICKETS=true          # on because the PII scrub tests pass
@@ -273,14 +294,29 @@ RAG_INDEX_RESOLVED_TICKETS=true          # on because the PII scrub tests pass
 
 ## What wasn't fully verified
 
-- The Mistral-embeddings backend path (`EMBEDDING_BACKEND == "mistral"`) —
-  coded, never exercised against a real key in this environment.
-- Mistral-driven (vs. keyword-heuristic) intent classification and
-  retrieval-assisted category grounding — same reason, no key configured
-  here. The keyword fallback path this repo actually runs on is fully
-  tested.
+- The Gemini backend path (chat, JSON-mode classification/intent, and
+  `text-embedding-004` embeddings via `llm_client.py`/`rag/embeddings.py`)
+  — coded against Gemini's documented request/response shape, never
+  exercised against a real key in this environment. Same disclosed status
+  Mistral's calls always had.
+- The Mistral secondary path — same reason, no key configured here either.
+  The keyword/hashing fallback path this repo actually runs on (and every
+  test in this suite exercises) is fully tested.
 - XLSX ingestion's `openpyxl` path — the reader is written and the "not
   installed" skip message is real, but no `.xlsx` sample was ingested live
   in this pass (CSV/JSON/JSONL all were).
 - Frontend admin page for `/api/rag/*` — see `FRONTEND.md` for what shipped
   and what's still a stub.
+
+## A migration gotcha this pass re-triggered
+
+`008_widen_rag_embedding_dimension.sql` first failed on startup with
+`syntax error at or near "the"` — a literal `;` inside a `--` comment line
+("...text-embedding-004 is natively 768-dim; the local scikit-learn...")
+tripped the naive `sql.split(";")` splitter (`database.py`), sending
+"the local scikit-learn... DELETE FROM rag_documents" as one garbled
+statement to Postgres. This is the exact gotcha `CLAUDE.md` already
+documents — re-triggered here despite knowing about it going in. Fixed by
+rewording the comment (em dash instead of semicolon) and confirmed the
+migration hadn't partially applied before the fix (column was still
+`vector(512)`, all rows intact) before re-running it clean.

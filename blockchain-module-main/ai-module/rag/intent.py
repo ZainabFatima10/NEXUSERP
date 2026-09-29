@@ -3,21 +3,15 @@ NEXUS ERP — VEMA Intent Router (Feature C point 5)
 Decides whether a customer turn is a complaint, an informational question,
 or smalltalk. This module only CLASSIFIES — it never creates a ticket or
 writes anything; vema_orchestrator.create_ticket() remains the only writer,
-per the hard boundary in Feature D's spec.
+per the hard boundary in Feature D's spec. LLM calls go through
+llm_client.py (Gemini primary, Mistral secondary).
 
-Dev-mode fallback (no MISTRAL_API_KEY): a deterministic keyword heuristic,
-same pattern as llm_service._keyword_classify.
+Dev-mode fallback (no provider configured): a deterministic keyword
+heuristic, same pattern as llm_service._keyword_classify.
 """
-import os
-import json
-from typing import Optional
-import httpx
-from dotenv import load_dotenv
+from llm_client import chat_json, is_available
 
-load_dotenv()
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+LLM_AVAILABLE = is_available()
 
 COMPLAINT_INTENT = "complaint_intake"
 QUESTION_INTENT = "information_question"
@@ -72,27 +66,8 @@ or "smalltalk" (greeting, thanks, chit-chat). Respond with ONLY JSON: \
 
 
 def classify_intent(text: str) -> str:
-    if not MISTRAL_API_KEY:
+    if not LLM_AVAILABLE:
         return _keyword_intent(text)
-    try:
-        resp = httpx.post(
-            MISTRAL_URL,
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": _INTENT_SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": 0.0,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=15.0,
-        )
-        resp.raise_for_status()
-        parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
-        intent = parsed.get("intent")
-        return intent if intent in VALID_INTENTS else _keyword_intent(text)
-    except Exception as e:
-        print(f"[WARN] Mistral intent classification failed ({e}), falling back to keyword heuristic")
-        return _keyword_intent(text)
+    parsed = chat_json(_INTENT_SYSTEM_PROMPT, text, temperature=0.0)
+    intent = parsed.get("intent") if parsed else None
+    return intent if intent in VALID_INTENTS else _keyword_intent(text)

@@ -1,31 +1,23 @@
 """
-NEXUS ERP — VEMA NLU / Conversation Service (Mistral API)
-The doc's "Rasa vs LLM API" decision is already resolved for this project:
-LLM API via Mistral. No Rasa integration here.
+NEXUS ERP — VEMA NLU / Conversation Service
+LLM calls go through llm_client.py (Gemini primary — free tier, no card
+required; Mistral secondary for anyone who already has that key). See
+llm_client.py's docstring for why there are two providers and how the
+priority works.
 
-Dev-mode fallback (MISTRAL_API_KEY unset): a deterministic keyword
+Dev-mode fallback (no provider configured): a deterministic keyword
 classifier + canned responses, so the full ticket lifecycle (classify ->
-route -> auto-resolve/escalate) is testable without a live API key —
-mirrors the MODEL_LOADED fallback pattern already used in inventory_v2.py.
+route -> auto-resolve/escalate) is testable without any API key — mirrors
+the MODEL_LOADED fallback pattern already used in inventory_v2.py.
 """
-import os, json
+import json
 from typing import Optional
-import httpx
-from dotenv import load_dotenv
 
 from taxonomy import TAXONOMY, default_severity_for, all_categories, subtypes_for
 from echo_guard import strip_echo
+from llm_client import chat_text, chat_json, is_available
 
-load_dotenv()
-
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-
-LLM_AVAILABLE = bool(MISTRAL_API_KEY)
-if not LLM_AVAILABLE:
-    print("[WARN] MISTRAL_API_KEY not set — VEMA NLU running in dev-mode "
-          "keyword classifier instead of the Mistral API.")
+LLM_AVAILABLE = is_available()
 
 
 # ---------------------------------------------------------------------------
@@ -105,38 +97,21 @@ def classify_complaint(text: str) -> dict:
     if not LLM_AVAILABLE:
         return _keyword_classify(text)
 
-    try:
-        resp = httpx.post(
-            MISTRAL_URL,
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
-                ],
-                "temperature": 0.1,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=20.0,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-        category = parsed.get("category")
-        subtype = parsed.get("subtype")
-        if category not in TAXONOMY or subtype not in subtypes_for(category):
-            # Model returned something outside the taxonomy — fall back safely.
-            return _keyword_classify(text)
-        return {
-            "category": category,
-            "subtype": subtype,
-            "severity": parsed.get("severity") or default_severity_for(category, subtype),
-            "summary": parsed.get("summary", text.strip()[:200]),
-        }
-    except Exception as e:
-        print(f"[WARN] Mistral classification failed ({e}), falling back to keyword classifier")
+    parsed = chat_json(_CLASSIFY_SYSTEM_PROMPT, text, temperature=0.1)
+    if parsed is None:
         return _keyword_classify(text)
+
+    category = parsed.get("category")
+    subtype = parsed.get("subtype")
+    if category not in TAXONOMY or subtype not in subtypes_for(category):
+        # Model returned something outside the taxonomy — fall back safely.
+        return _keyword_classify(text)
+    return {
+        "category": category,
+        "subtype": subtype,
+        "severity": parsed.get("severity") or default_severity_for(category, subtype),
+        "summary": parsed.get("summary", text.strip()[:200]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -176,28 +151,14 @@ def attempt_auto_resolution(category: str, subtype: str, description: str) -> di
             }
         return {"resolved": False, "message": "Needs a Customer Representative."}
 
-    try:
-        resp = httpx.post(
-            MISTRAL_URL,
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": _AUTO_RESOLVE_SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Category: {category}\nSubtype: {subtype}\nComplaint: {description}"},
-                ],
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=20.0,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-        return {"resolved": bool(parsed.get("resolved")), "message": parsed.get("message", "")}
-    except Exception as e:
-        print(f"[WARN] Mistral auto-resolution failed ({e}), escalating to CR")
+    parsed = chat_json(
+        _AUTO_RESOLVE_SYSTEM_PROMPT,
+        f"Category: {category}\nSubtype: {subtype}\nComplaint: {description}",
+        temperature=0.2,
+    )
+    if parsed is None:
         return {"resolved": False, "message": "Needs a Customer Representative."}
+    return {"resolved": bool(parsed.get("resolved")), "message": parsed.get("message", "")}
 
 
 # ---------------------------------------------------------------------------
@@ -224,30 +185,6 @@ def _fallback_chat_reply(ticket_code: Optional[str]) -> str:
     return f"Thanks — I've logged your complaint.{suffix} Our team will follow up as needed."
 
 
-def _call_chat_completion(customer_message: str, strict: bool = False) -> Optional[str]:
-    """Returns the raw Mistral reply, or None on any failure (never raises)."""
-    system_prompt = _CHAT_SYSTEM_PROMPT + (_ECHO_RETRY_NOTICE if strict else "")
-    try:
-        resp = httpx.post(
-            MISTRAL_URL,
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": customer_message},
-                ],
-                "temperature": 0.4,
-            },
-            timeout=20.0,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"[WARN] Mistral chat reply failed ({e})")
-        return None
-
-
 def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None) -> str:
     """
     Returns a reply that never opens by restating customer_message (Feature
@@ -259,7 +196,7 @@ def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None
     if not LLM_AVAILABLE:
         return fallback  # fixed acknowledgement, never echoes by construction
 
-    reply = _call_chat_completion(customer_message)
+    reply = chat_text(_CHAT_SYSTEM_PROMPT, customer_message, temperature=0.4)
     if reply is None:
         return fallback
 
@@ -268,7 +205,7 @@ def generate_chat_reply(customer_message: str, ticket_code: Optional[str] = None
         print("[WARN] echo-guard stripped an echoed prefix from VEMA's chat reply")
         if not cleaned:
             # The whole reply was an echo — one stricter regeneration attempt.
-            retry = _call_chat_completion(customer_message, strict=True)
+            retry = chat_text(_CHAT_SYSTEM_PROMPT + _ECHO_RETRY_NOTICE, customer_message, temperature=0.4)
             cleaned = ""
             if retry:
                 cleaned, _ = strip_echo(retry, customer_message)

@@ -4,24 +4,20 @@ Answers a customer's question grounded ONLY in retrieved context. Never
 hallucinates — an honest "I don't know" + offer to file a complaint when
 nothing relevant is retrieved. Complies with Feature A (echo_guard) and
 treats retrieved text + user text as data, never instructions (basic
-prompt-injection resistance).
+prompt-injection resistance). LLM calls go through llm_client.py (Gemini
+primary, Mistral secondary — see that module's docstring).
 
-Dev-mode fallback (no MISTRAL_API_KEY): returns the best match's stored
+Dev-mode fallback (no provider configured): returns the best match's stored
 answer verbatim instead of an LLM-synthesized one — still genuinely
 grounded, just skips synthesis, same spirit as llm_service.py's fallbacks.
 """
-import os
-from typing import List, Optional
-import httpx
-from dotenv import load_dotenv
+from typing import List
 
 from echo_guard import strip_echo
+from llm_client import chat_text, is_available
 from rag.vector_store import RagSearchResult
 
-load_dotenv()
-MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
-MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
+LLM_AVAILABLE = is_available()
 
 NO_ANSWER_REPLY = (
     "I don't have information on that. Would you like me to log this as a "
@@ -48,28 +44,6 @@ def _format_context(results: List[RagSearchResult]) -> str:
     return "\n".join(f"- Q: {r.question}\n  A: {r.answer}" for r in results)
 
 
-def _call_mistral(question: str, context: str) -> Optional[str]:
-    try:
-        resp = httpx.post(
-            MISTRAL_URL,
-            headers={"Authorization": f"Bearer {MISTRAL_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": MISTRAL_MODEL,
-                "messages": [
-                    {"role": "system", "content": _GEN_SYSTEM_PROMPT.format(context=context)},
-                    {"role": "user", "content": question},
-                ],
-                "temperature": 0.2,
-            },
-            timeout=20.0,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        print(f"[WARN] Mistral RAG generation failed ({e})")
-        return None
-
-
 def generate_answer(question: str, results: List[RagSearchResult]) -> dict:
     """
     Returns {reply, grounded, sources, retrieval_scores}. grounded=False
@@ -82,10 +56,11 @@ def generate_answer(question: str, results: List[RagSearchResult]) -> dict:
     sources = [r.id for r in results]
     scores = [round(r.score, 4) for r in results]
 
-    if not MISTRAL_API_KEY:
+    if not LLM_AVAILABLE:
         reply = results[0].answer
     else:
-        reply = _call_mistral(question, _format_context(results)) or results[0].answer
+        system_prompt = _GEN_SYSTEM_PROMPT.format(context=_format_context(results))
+        reply = chat_text(system_prompt, question, temperature=0.2) or results[0].answer
 
     cleaned, fired = strip_echo(reply, question)
     if fired:

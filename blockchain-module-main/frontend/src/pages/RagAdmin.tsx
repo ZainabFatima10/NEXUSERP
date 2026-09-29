@@ -111,7 +111,7 @@ const RagAdmin = () => {
             <div className="sm:col-span-3 text-[11px] text-muted-foreground pt-1">
               Total: {stats.total} documents · Embedding backend: <span className="font-mono">{stats.embedding_backend}</span>
               {stats.embedding_backend === "hashing" && (
-                <span> (Mistral API key not set — using the local term-hashing fallback; see VEMA_RAG.md)</span>
+                <span> (no Gemini/Mistral API key set — using the local term-hashing fallback; see VEMA_RAG.md)</span>
               )}
             </div>
           </div>

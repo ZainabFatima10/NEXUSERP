@@ -619,7 +619,7 @@ export const ragQuery = (question: string, category?: string) =>
 export interface RagStats {
   total: number;
   by_doc_type: Record<string, { count: number; last_updated: string | null }>;
-  embedding_backend: "mistral" | "hashing";
+  embedding_backend: "gemini" | "hashing";
 }
 
 export const getRagStats = () => apiFetch<RagStats>("/api/rag/stats");
