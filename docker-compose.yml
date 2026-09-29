@@ -20,6 +20,13 @@
   n8n:
     image: n8nio/n8n:latest
     container_name: nexus_n8n
+    # Both workflows' Send Email node reads its "From" address via
+    # {{$env.SMTP_USER}} — n8n blocks $env access inside expressions unless
+    # explicitly allowed, and needs the var itself passed in. env_file reuses
+    # the same ai-module/.env FastAPI already reads (SMTP_USER lives there),
+    # so there's one source of truth instead of a second copy in this file.
+    env_file:
+      - blockchain-module-main/ai-module/.env
     environment:
       N8N_HOST: localhost
       N8N_PORT: '5678'
@@ -27,6 +34,7 @@
       WEBHOOK_URL: http://localhost:5678/
       GENERIC_TIMEZONE: Asia/Karachi
       N8N_RUNNERS_ENABLED: 'true'
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: 'false'
     ports:
       - '5678:5678'
     volumes:
