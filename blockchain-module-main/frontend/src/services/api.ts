@@ -449,6 +449,7 @@ export type ComplaintChannel = "voice" | "chat" | "manual";
 export interface Complaint {
   id: string;
   ticket_code: string;
+  reference_id: string | null;
   customer_id: string | null;
   customer_name: string | null;
   customer_email: string | null;
@@ -481,13 +482,14 @@ export interface ComplaintEvent {
 }
 
 export const getComplaints = (params?: {
-  status?: string; category?: string; severity?: string;
+  status?: string; category?: string; severity?: string; search?: string;
   order?: "recent" | "priority"; limit?: number;
 }) => {
   const q = new URLSearchParams();
   if (params?.status) q.set("status", params.status);
   if (params?.category) q.set("category", params.category);
   if (params?.severity) q.set("severity", params.severity);
+  if (params?.search) q.set("search", params.search);
   if (params?.order) q.set("order", params.order);
   if (params?.limit) q.set("limit", String(params.limit));
   return apiFetch<{ total: number; tickets: Complaint[] }>(`/api/complaints?${q}`);
@@ -511,7 +513,10 @@ export const escalateComplaint = (id: string, note?: string) =>
   });
 
 export const submitChatComplaint = (message: string, area?: string) =>
-  apiFetch<{ ticket_code: string; ticket_id: string; classification: Record<string, unknown>; status: string; reply_text: string }>(
+  apiFetch<{
+    ticket_code: string; ticket_id: string; reference_id: string;
+    classification: Record<string, unknown>; status: string; reply_text: string;
+  }>(
     "/api/complaints/chat",
     { method: "POST", body: JSON.stringify({ message, area }) }
   );
@@ -539,7 +544,7 @@ export const transcribeVoiceComplaint = async (audioBlob: Blob) => {
 /** Step 2: submit the confirmed (possibly edited) voice transcript. */
 export const submitVoiceComplaint = (message: string, area?: string) =>
   apiFetch<{
-    ticket_code: string; ticket_id: string; transcript: string;
+    ticket_code: string; ticket_id: string; reference_id: string; transcript: string;
     classification: Record<string, unknown>; status: string; reply_text: string;
     reply_audio_base64: string | null; reply_audio_available: boolean;
   }>("/api/complaints/voice", { method: "POST", body: JSON.stringify({ message, area }) });
@@ -549,6 +554,23 @@ export const deleteComplaint = (id: string) =>
   apiFetch<{ message: string }>(`/api/complaints/${id}`, { method: "DELETE" });
 
 export const getComplaintTaxonomy = () => apiFetch<Record<string, string[]>>("/api/complaints/taxonomy");
+
+// ─── Feature B: complaint category reference ────────────────────────────────
+export interface ComplaintCategoryRef {
+  category: string;
+  code: string;
+  description: string;
+  default_severity: ComplaintSeverity;
+  routing_hint: string;
+  example_phrases: { en: string[]; roman_ur: string[] };
+  subtypes: string[];
+  required_fields: string[];
+  guidance: string | null;
+  ticket_count: number;
+}
+
+export const getComplaintCategories = () =>
+  apiFetch<ComplaintCategoryRef[]>("/api/complaints/categories");
 
 export const createManualComplaint = (payload: {
   description: string; category: string; subtype: string; severity?: string;

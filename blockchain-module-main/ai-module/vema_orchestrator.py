@@ -14,14 +14,35 @@ Preserves the existing two-path lifecycle's spirit (auto-resolve vs
 admin_pending) but extends it to three tiers as required.
 """
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from llm_service import classify_complaint, attempt_auto_resolution
 from notification_service import notify_role, create_notification
 from email_service import send_customer_resolution_email
-from taxonomy import REMINDER_INTERVAL_MINUTES, CRITICAL, MEDIUM, SMALL
+from taxonomy import REMINDER_INTERVAL_MINUTES, CRITICAL, MEDIUM, SMALL, code_for
+
+
+def _generate_reference_id(db: Session, category: str, max_attempts: int = 5) -> str:
+    """
+    VEMA-<CATEGORY CODE>-<YYYYMMDD>-<seq>, e.g. VEMA-POWER-20260929-004.
+    Uses UTC date (matches TIMESTAMPTZ storage everywhere else in this
+    codebase). seq is the next number for this category+day; the actual
+    uniqueness guarantee comes from the DB's partial unique index
+    (idx_complaints_reference_id, migration 006), not this count — a
+    concurrent insert landing on the same seq raises IntegrityError, which
+    the caller retries against a re-read count.
+    """
+    date_part = datetime.now(timezone.utc).strftime("%Y%m%d")
+    prefix = f"VEMA-{code_for(category)}-{date_part}-"
+    count = db.execute(
+        text("SELECT COUNT(*) FROM complaints WHERE reference_id LIKE :p"),
+        {"p": f"{prefix}%"},
+    ).scalar() or 0
+    return f"{prefix}{count + 1:03d}"
 
 
 def _log_event(db: Session, complaint_id: str, event_type: str, actor: str, content: str, metadata: dict = None):
@@ -70,26 +91,38 @@ def create_ticket(
     ticket_id = str(uuid.uuid4())
     ticket_code = "TKT-" + uuid.uuid4().hex[:6].upper()
 
-    db.execute(
-        text("""
-            INSERT INTO complaints (
-              id, ticket_code, customer_id, customer_name, customer_email, channel,
-              category, subtype, severity, description, area, status, vema_triggered,
-              created_at, updated_at
-            ) VALUES (
-              :id, :code, :cust_id, :cust_name, :cust_email, :channel,
-              :category, :subtype, :severity, :description, :area, 'open', :vema_triggered,
-              NOW(), NOW()
+    # reference_id (Feature B) has a real uniqueness guarantee only from the
+    # DB's partial unique index (migration 006) — _generate_reference_id()'s
+    # count is just a best-effort next-seq, so a concurrent insert landing on
+    # the same value raises IntegrityError here; retry against a fresh count.
+    for attempt in range(5):
+        reference_id = _generate_reference_id(db, classification["category"])
+        try:
+            db.execute(
+                text("""
+                    INSERT INTO complaints (
+                      id, ticket_code, reference_id, customer_id, customer_name, customer_email, channel,
+                      category, subtype, severity, description, area, status, vema_triggered,
+                      created_at, updated_at
+                    ) VALUES (
+                      :id, :code, :reference_id, :cust_id, :cust_name, :cust_email, :channel,
+                      :category, :subtype, :severity, :description, :area, 'open', :vema_triggered,
+                      NOW(), NOW()
+                    )
+                """),
+                {
+                    "id": ticket_id, "code": ticket_code, "reference_id": reference_id,
+                    "cust_id": customer_id, "cust_name": customer_name, "cust_email": customer_email,
+                    "channel": channel, "category": classification["category"], "subtype": classification["subtype"],
+                    "severity": classification["severity"], "description": description, "area": area,
+                    "vema_triggered": vema_triggered,
+                },
             )
-        """),
-        {
-            "id": ticket_id, "code": ticket_code,
-            "cust_id": customer_id, "cust_name": customer_name, "cust_email": customer_email,
-            "channel": channel, "category": classification["category"], "subtype": classification["subtype"],
-            "severity": classification["severity"], "description": description, "area": area,
-            "vema_triggered": vema_triggered,
-        },
-    )
+            break
+        except IntegrityError:
+            db.rollback()
+            if attempt == 4:
+                raise
 
     actor = "customer" if channel in ("voice", "chat") else (logged_by_actor or "admin")
     _log_event(db, ticket_id, "voice_transcript" if channel == "voice" else "chat_message", actor, description)
@@ -102,7 +135,10 @@ def create_ticket(
     db.commit()
 
     outcome = _route_ticket(db, ticket_id, ticket_code, classification["severity"], classification, customer_name, customer_email)
-    return {"ticket_id": ticket_id, "ticket_code": ticket_code, "classification": classification, **outcome}
+    return {
+        "ticket_id": ticket_id, "ticket_code": ticket_code, "reference_id": reference_id,
+        "classification": classification, **outcome,
+    }
 
 
 def _route_ticket(db: Session, ticket_id: str, ticket_code: str, severity: str, classification: dict,

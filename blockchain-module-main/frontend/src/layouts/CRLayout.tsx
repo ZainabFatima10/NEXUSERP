@@ -2,19 +2,21 @@
 import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { LayoutDashboard, Ticket, Bell } from "lucide-react";
+import { LayoutDashboard, Ticket, Bell, BookOpen } from "lucide-react";
 import Sidebar, { NavItem } from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 
 const CR_NAV_ITEMS: NavItem[] = [
   { to: "/cr", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/cr/tickets", label: "All Tickets", icon: Ticket },
+  { to: "/cr/categories", label: "Complaint Categories", icon: BookOpen },
   { to: "/cr/notifications", label: "Notifications", icon: Bell },
 ];
 
 const TITLES: Record<string, string> = {
   "/cr": "Customer Representative Dashboard",
   "/cr/tickets": "All Tickets",
+  "/cr/categories": "Complaint Categories",
   "/cr/notifications": "Notifications",
 };
 

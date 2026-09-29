@@ -17,6 +17,7 @@ import Procurement from "@/pages/Procurement";
 import OutagePrediction from "@/pages/OutagePrediction";
 import Complaints from "@/pages/Complaints";
 import Notifications from "@/pages/Notifications";
+import CategoryReference from "@/pages/CategoryReference";
 import NotFound from "@/pages/NotFound";
 
 import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
@@ -46,6 +47,7 @@ function App() {
                 <Route path="procurement" element={<Procurement />} />
                 <Route path="outage-prediction" element={<OutagePrediction />} />
                 <Route path="complaints" element={<Complaints />} />
+                <Route path="categories" element={<CategoryReference />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
             </Route>
@@ -65,6 +67,7 @@ function App() {
               <Route path="/cr" element={<CRLayout />}>
                 <Route index element={<CRDashboard />} />
                 <Route path="tickets" element={<TicketLog />} />
+                <Route path="categories" element={<CategoryReference />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
             </Route>

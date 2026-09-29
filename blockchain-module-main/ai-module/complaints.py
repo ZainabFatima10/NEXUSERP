@@ -21,7 +21,7 @@ from sqlalchemy import text
 
 from database import get_db
 from rbac import require_role, get_current_user, ROLE_CUSTOMER, ROLE_CUSTOMER_REP
-from taxonomy import all_categories, subtypes_for
+from taxonomy import all_categories, subtypes_for, reference_table
 import stt_service
 import tts_service
 import llm_service
@@ -80,6 +80,7 @@ def submit_voice_complaint(req: VoiceComplaintRequest, user: dict = Depends(get_
     return {
         "ticket_code": result["ticket_code"],
         "ticket_id": result["ticket_id"],
+        "reference_id": result["reference_id"],
         "transcript": text_content,
         "classification": result["classification"],
         "status": result["status"],
@@ -105,6 +106,7 @@ def submit_chat_complaint(req: ChatComplaintRequest, user: dict = Depends(get_cu
     return {
         "ticket_code": result["ticket_code"],
         "ticket_id": result["ticket_id"],
+        "reference_id": result["reference_id"],
         "classification": result["classification"],
         "status": result["status"],
         "reply_text": reply_text,
@@ -165,6 +167,7 @@ def list_complaints(
     status: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, description="Matches ticket_code, reference_id, or description"),
     order: str = Query("recent"),
     limit: int = Query(100, le=500),
     offset: int = Query(0),
@@ -182,6 +185,9 @@ def list_complaints(
     if severity:
         filters += " AND severity = :severity"
         params["severity"] = severity
+    if search:
+        filters += " AND (ticket_code ILIKE :search OR reference_id ILIKE :search OR description ILIKE :search)"
+        params["search"] = f"%{search}%"
 
     rows = db.execute(
         text(f"""
@@ -199,6 +205,22 @@ def list_complaints(
 def get_taxonomy():
     """Public reference data for building manual-entry / filter dropdowns."""
     return {cat: subtypes_for(cat) for cat in all_categories()}
+
+
+@router.get("/categories")
+def get_categories(db: Session = Depends(get_db)):
+    """
+    Feature B — the "Complaint Categories" reference view. One source of
+    truth (taxonomy.py) plus live ticket counts; admin and CR both read this,
+    nothing duplicates the category list on the frontend.
+    """
+    counts = dict(db.execute(
+        text("SELECT category, COUNT(*) AS n FROM complaints GROUP BY category")
+    ).all())
+    return [
+        {**record, "ticket_count": counts.get(record["category"], 0)}
+        for record in reference_table()
+    ]
 
 
 @router.get("/{ticket_id}")

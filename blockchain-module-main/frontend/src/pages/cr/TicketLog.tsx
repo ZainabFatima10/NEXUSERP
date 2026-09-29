@@ -1,7 +1,7 @@
 // src/pages/cr/TicketLog.tsx
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Loader2, Mic, Bell, Ticket as TicketIcon, RefreshCw, Plus } from "lucide-react";
-import { Complaint, getComplaints } from "@/services/api";
+import { Loader2, Mic, Bell, Ticket as TicketIcon, RefreshCw, Plus, Search } from "lucide-react";
+import { Complaint, getComplaints, getComplaintTaxonomy } from "@/services/api";
 import TicketDetailModal from "@/components/TicketDetailModal";
 import LogComplaintModal from "@/components/LogComplaintModal";
 
@@ -28,10 +28,25 @@ const TicketLog = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [status, setStatus] = useState("all");
   const [severity, setSeverity] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
   const [order, setOrder] = useState<"recent" | "priority">("recent");
   const [selected, setSelected] = useState<string | null>(null);
   const [logging, setLogging] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
   const firstLoad = useRef(true);
+
+  useEffect(() => {
+    getComplaintTaxonomy().then((t) => setCategories(Object.keys(t))).catch(() => {});
+  }, []);
+
+  // Debounce the free-text search (reference ID / ticket code / description)
+  // so we're not re-querying on every keystroke.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
 
   const load = useCallback(() => {
     if (firstLoad.current) setLoading(true);
@@ -39,6 +54,8 @@ const TicketLog = () => {
     getComplaints({
       status: status === "all" ? undefined : status,
       severity: severity === "all" ? undefined : severity,
+      category: category === "all" ? undefined : category,
+      search: search || undefined,
       order,
       limit: 200,
     })
@@ -49,7 +66,7 @@ const TicketLog = () => {
         setRefreshing(false);
         firstLoad.current = false;
       });
-  }, [status, severity, order]);
+  }, [status, severity, category, search, order]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -74,6 +91,16 @@ const TicketLog = () => {
         </button>
       </div>
 
+      <div className="relative flex-1 min-w-[220px]">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <input
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search by reference ID, ticket code, or description…"
+          className="w-full pl-8 pr-3 py-2 text-sm rounded-lg bg-muted/50 border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+        />
+      </div>
+
       <div className="flex gap-3 flex-wrap items-center">
         <select
           value={status}
@@ -92,6 +119,14 @@ const TicketLog = () => {
           {SEVERITY_OPTIONS.map((s) => (
             <option key={s} value={s}>{s === "all" ? "All severities" : s}</option>
           ))}
+        </select>
+        <select
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+        >
+          <option value="all">All categories</option>
+          {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
         <select
           value={order}
@@ -133,6 +168,9 @@ const TicketLog = () => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap mb-1">
                   <span className="text-xs font-mono text-muted-foreground">{t.ticket_code}</span>
+                  {t.reference_id && (
+                    <span className="text-[11px] font-mono text-primary/80">{t.reference_id}</span>
+                  )}
                   <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${severityStyle[t.severity]}`}>
                     {t.severity}
                   </span>
