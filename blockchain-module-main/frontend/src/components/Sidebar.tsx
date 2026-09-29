@@ -2,7 +2,7 @@
 import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, Package, CloudLightning, MessageSquare,
-  Bell, ChevronLeft, ChevronRight, LogOut, TrendingUp, ShoppingCart, BookOpen,
+  Bell, ChevronLeft, ChevronRight, LogOut, TrendingUp, ShoppingCart, BookOpen, Database,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -32,6 +32,7 @@ export const ADMIN_NAV_ITEMS: NavItem[] = [
   { to: "/admin/outage-prediction", label: "Outage Prediction", icon: CloudLightning },
   { to: "/admin/complaints", label: "User Complaints", icon: MessageSquare },
   { to: "/admin/categories", label: "Complaint Categories", icon: BookOpen },
+  { to: "/admin/knowledge-base", label: "Knowledge Base", icon: Database },
   { to: "/admin/notifications", label: "Notifications", icon: Bell },
 ];
 

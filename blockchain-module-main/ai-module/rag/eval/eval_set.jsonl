@@ -1,0 +1,17 @@
+{"query": "my electricity bill has an amount I don't recognize", "expect_keyword": "billing complaint", "in_domain": true}
+{"query": "how can I settle my electricity bill", "expect_keyword": "NEXUS app", "in_domain": true}
+{"query": "I sent money for my bill but the account still shows unpaid", "expect_keyword": "payment not reflected", "in_domain": true}
+{"query": "the display on my meter is dead", "expect_keyword": "faulty meter", "in_domain": true}
+{"query": "how do I get power connected to a new house", "expect_keyword": "new connection application", "in_domain": true}
+{"query": "they cut my power without telling me first", "expect_keyword": "wrongful disconnection", "in_domain": true}
+{"query": "no power at all in my street right now", "expect_keyword": "load-shedding", "in_domain": true}
+{"query": "appliances keep getting damaged from unstable voltage", "expect_keyword": "voltage fluctuation", "in_domain": true}
+{"query": "how do I complain about rude staff at the office", "expect_keyword": "customer relations", "in_domain": true}
+{"query": "my neighbor has hooked up an unauthorized line", "expect_keyword": "location", "in_domain": true}
+{"query": "there's a live wire down on my road", "expect_keyword": "safe distance", "in_domain": true}
+{"query": "how does the ticket escalation process work", "expect_keyword": "representative", "in_domain": true}
+{"query": "what is the weather like tomorrow", "in_domain": false}
+{"query": "recommend me a good restaurant nearby", "in_domain": false}
+{"query": "who is the president of the united states", "in_domain": false}
+{"query": "how do I bake a chocolate cake", "in_domain": false}
+{"query": "what time does the cricket match start", "in_domain": false}

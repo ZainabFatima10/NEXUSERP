@@ -598,3 +598,65 @@ export const getSalesByRegion = () => apiFetch<{ data: RegionData[] }>("/sales/b
 export const getSalesTrend = (groupBy: "day" | "month" | "year" = "month") => apiFetch<{ data: TrendData[]; group_by: string }>(`/sales/trend?group_by=${groupBy}`);
 export const getInventoryStatus = () => apiFetch<{ data: InventoryStatus[] }>("/sales/inventory-status");
 export const predictDemand = (payload: PredictionRequest) => apiFetch<PredictionResponse>("/api/predict", { method: "POST", body: JSON.stringify(payload) });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VEMA RAG — Q&A + complaint grounding (Features C/D, see VEMA_RAG.md)
+// ═══════════════════════════════════════════════════════════════════════════════
+export interface RagQueryResponse {
+  reply: string;
+  intent: "complaint_intake" | "information_question" | "smalltalk";
+  grounded: boolean;
+  sources: string[];
+  retrieval_scores: number[];
+}
+
+export const ragQuery = (question: string, category?: string) =>
+  apiFetch<RagQueryResponse>("/api/rag/query", {
+    method: "POST",
+    body: JSON.stringify({ question, category }),
+  });
+
+export interface RagStats {
+  total: number;
+  by_doc_type: Record<string, { count: number; last_updated: string | null }>;
+  embedding_backend: "mistral" | "hashing";
+}
+
+export const getRagStats = () => apiFetch<RagStats>("/api/rag/stats");
+
+export interface RagIngestResponse {
+  ingested: number;
+  skipped: number;
+  duplicates: number;
+  skip_reasons: string[];
+}
+
+export const ragIngest = async (file: File) => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE_URL}/api/rag/ingest`, {
+    method: "POST",
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `API error ${res.status}`);
+  }
+  return res.json() as Promise<RagIngestResponse>;
+};
+
+export const ragReindex = () =>
+  apiFetch<{ category_kb_documents: number; resolved_ticket_documents: number }>("/api/rag/reindex", { method: "POST" });
+
+export interface SimilarCase {
+  ticket_code: string | null;
+  category: string | null;
+  summary: string;
+  resolution: string;
+  score: number;
+}
+
+export const getSimilarCases = (ticketId: string) =>
+  apiFetch<{ cases: SimilarCase[] }>(`/api/complaints/${ticketId}/similar`);

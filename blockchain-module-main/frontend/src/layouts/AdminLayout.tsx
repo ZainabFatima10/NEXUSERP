@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   "/admin/outage-prediction": "Outage Prediction",
   "/admin/complaints": "User Complaints",
   "/admin/categories": "Complaint Categories",
+  "/admin/knowledge-base": "Knowledge Base",
   "/admin/notifications": "Notifications",
 };
 

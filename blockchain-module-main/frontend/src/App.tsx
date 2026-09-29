@@ -18,6 +18,7 @@ import OutagePrediction from "@/pages/OutagePrediction";
 import Complaints from "@/pages/Complaints";
 import Notifications from "@/pages/Notifications";
 import CategoryReference from "@/pages/CategoryReference";
+import RagAdmin from "@/pages/RagAdmin";
 import NotFound from "@/pages/NotFound";
 
 import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
@@ -48,6 +49,7 @@ function App() {
                 <Route path="outage-prediction" element={<OutagePrediction />} />
                 <Route path="complaints" element={<Complaints />} />
                 <Route path="categories" element={<CategoryReference />} />
+                <Route path="knowledge-base" element={<RagAdmin />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
             </Route>

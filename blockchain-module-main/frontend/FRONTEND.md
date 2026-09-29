@@ -41,6 +41,19 @@ run on live data from `/api/complaints`. `src/data/mockComplaints.ts` has been
 removed. See `VEMA_BACKEND_WIRING.md` for the full pipeline, taxonomy, and
 severity/reminder routing.
 
+**RAG (Q&A + complaint grounding)** — `/admin/categories` (`CategoryReference.tsx`,
+also at `/cr/categories`) reads `GET /api/complaints/categories`, the one
+source-of-truth taxonomy reference with live ticket counts; nothing here
+duplicates the category list. `/admin/knowledge-base` (`RagAdmin.tsx`,
+admin-only) is the Feature C/D admin surface: document counts per source, a
+dataset-file upload, a reindex button, and a test-query box hitting
+`POST /api/rag/query`. The Customer/CR-facing complaint flow (voice/chat
+intake, the voice-agent confirm step) is **not wired to the Q&A path** in
+this pass — `POST /api/rag/query` exists and is tested end-to-end via the
+admin test box, but the live Customer Portal conversation doesn't call it
+yet. `data/qa/seed_qa.jsonl` (backend) is sample Q&A content for the team to
+review/replace, not real historical data — see `VEMA_RAG.md`.
+
 ## Billing / procurement invoices
 
 Placing a blockchain procurement order — from the **Procurement** tab (manual/smart-contract order), or an auto-triggered one from Inventory Check / VEMA-style triggers — generates a real bill:
