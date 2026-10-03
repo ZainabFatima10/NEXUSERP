@@ -48,3 +48,8 @@ python-multipart==0.0.9   # required by FastAPI for UploadFile/Form (voice compl
 # Text-to-speech:
 # kokoro>=0.7.0
 # soundfile==0.12.1
+#
+# RAG dataset ingestion (rag/ingest.py) — CSV/JSON/JSONL need nothing extra;
+# .xlsx needs openpyxl. Optional: ingest_file() skips .xlsx files with a
+# clear message (never crashes the batch) if it isn't installed.
+# openpyxl==3.1.5

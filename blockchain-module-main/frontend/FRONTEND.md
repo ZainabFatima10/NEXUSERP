@@ -47,12 +47,15 @@ source-of-truth taxonomy reference with live ticket counts; nothing here
 duplicates the category list. `/admin/knowledge-base` (`RagAdmin.tsx`,
 admin-only) is the Feature C/D admin surface: document counts per source, a
 dataset-file upload, a reindex button, and a test-query box hitting
-`POST /api/rag/query`. The Customer/CR-facing complaint flow (voice/chat
-intake, the voice-agent confirm step) is **not wired to the Q&A path** in
-this pass — `POST /api/rag/query` exists and is tested end-to-end via the
-admin test box, but the live Customer Portal conversation doesn't call it
-yet. `data/qa/seed_qa.jsonl` (backend) is sample Q&A content for the team to
-review/replace, not real historical data — see `VEMA_RAG.md`.
+`POST /api/rag/query`. The Customer Portal's live voice/chat conversation
+(`CustomerPortal.tsx`) now also calls `POST /api/rag/query` itself, before
+either path decides what to do with a message: a genuine question or
+smalltalk is answered directly (no ticket filed); only `complaint_intake`
+still opens the existing review-before-submit draft panel / confirm-and-file
+voice loop. Routing fails open to the complaint flow if the RAG call errors,
+so a customer's message is never silently dropped. `data/qa/seed_qa.jsonl`
+and `data/qa/sample_import.xlsx` (backend) are sample Q&A content for the
+team to review/replace, not real historical data — see `VEMA_RAG.md`.
 
 ## Billing / procurement invoices
 

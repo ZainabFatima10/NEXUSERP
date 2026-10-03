@@ -379,13 +379,46 @@ RAG_INDEX_RESOLVED_TICKETS=true          # on because the PII scrub tests pass
 - The Mistral secondary path — no Mistral key was ever available to test
   against; the Gemini primary and the keyword/hashing fallback are both now
   live-verified (see above).
-- XLSX ingestion's `openpyxl` path — the reader is written and the "not
-  installed" skip message is real, but no `.xlsx` sample was ingested live
-  in this pass (CSV/JSON/JSONL all were).
-- Frontend admin page for `/api/rag/*` — see `FRONTEND.md` for what shipped
-  and what's still a stub. Backend behind it (`/api/rag/query`,
-  `/api/rag/stats`, `/api/rag/reindex`, ingestion) is live-verified via
-  direct API calls with a real Gemini key.
+
+Everything else previously listed here (XLSX ingestion, the admin frontend
+page, the Customer Portal's live voice/chat wiring) has since been
+live-tested — see "XLSX ingestion is now live-tested" and "Feature C is now
+live in the Customer Portal" below.
+
+## XLSX ingestion is now live-tested
+
+`data/qa/sample_import.xlsx` (3 valid rows + 1 deliberately blank-question
+row) was ingested via `python -m rag.ingest --path data/qa/ --rebuild` —
+the real `openpyxl` reader path, not just the "not installed" skip message.
+Confirmed: the directory scan picks up `.xlsx` alongside `.jsonl` in the
+same call, the malformed row is skipped without aborting the batch (`[OK]
+sample_import.xlsx: ingested=3 skipped=1 duplicates=0`), and a question from
+the sheet is retrievable end-to-end through `/api/rag/query` (score 1.0 on
+an exact match). `openpyxl` itself is commented into `requirements.txt` as
+an optional dependency, matching the existing STT/TTS pattern — install it
+only if you need `.xlsx` ingestion.
+
+## Feature C is now live in the Customer Portal
+
+Previously, grounded Q&A was only reachable through the admin test-query
+box — every message typed or spoken into the actual customer-facing portal
+was treated as a complaint, regardless of what it said. `CustomerPortal.tsx`
+now calls `POST /api/rag/query` to classify intent *before* deciding what
+to do with a message:
+
+- `complaint_intake` → unchanged: opens the existing review-before-submit
+  draft panel (chat) or confirm-and-file loop (voice), same deterministic
+  ticket-creation path as before.
+- `information_question` / `smalltalk` → answered directly with the RAG
+  reply, no draft, no ticket. In a voice call, VEMA speaks the answer and
+  keeps listening (`continue`s the call loop) rather than asking "would you
+  like to report anything else", since nothing was filed.
+
+Routing fails open: if `/api/rag/query` errors (network, rate limit), the
+message falls through to the complaint flow exactly as before this change,
+so a customer's message is never silently dropped. A new `routing` state
+drives a "Thinking…" indicator (chat bubble / call status bar) while the
+classification call is in flight.
 
 ## A migration gotcha this pass re-triggered
 
@@ -399,3 +432,54 @@ documents — re-triggered here despite knowing about it going in. Fixed by
 rewording the comment (em dash instead of semicolon) and confirmed the
 migration hadn't partially applied before the fix (column was still
 `vector(512)`, all rows intact) before re-running it clean.
+
+## A second, more serious migration-008 bug: it wiped the corpus on every restart, not just once
+
+`database.run_schema()` re-applies every numbered migration file on *every*
+startup (by design — see `CLAUDE.md`'s "Migrations" section), so every
+migration must be safe to re-run indefinitely. Migration 008's original
+body was:
+
+```sql
+DELETE FROM rag_documents;
+ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(768);
+```
+
+The `ALTER` is genuinely idempotent (a no-op against an already-`vector(768)`
+column), but the `DELETE` had no guard at all — it unconditionally erased
+the entire table on *every single backend restart*, forever, not just once
+during the 512→768 widen it was written for. This was caught live, by
+accident: a routine restart (to pick up an unrelated code fix) silently
+wiped an already-ingested 38-document corpus (23 Q&A + 8 category KB + 7
+resolved tickets) down to zero, with no error, no warning — the next
+`/api/rag/query` call just stopped returning grounded answers, and only
+checking `rag_documents` row counts directly surfaced that anything had
+gone wrong.
+
+Fixed by guarding the `DELETE` on the column's *current* dimension, so it
+only fires the first time this runs against a pre-768-dim column:
+
+```sql
+DELETE FROM rag_documents
+WHERE (
+  SELECT atttypmod FROM pg_attribute
+  WHERE attrelid = 'rag_documents'::regclass AND attname = 'embedding'
+) IS DISTINCT FROM 768;
+ALTER TABLE rag_documents ALTER COLUMN embedding TYPE vector(768);
+```
+
+(pgvector stores a `vector(n)` column's dimension directly in `atttypmod` —
+confirmed `768`, not an offset value, by querying the live DB.) No `DO`
+block was used to express this, specifically *because* a `DO $$ ... $$`
+block's internal statements are separated by semicolons too, and the naive
+splitter would shred it — the one-statement `WHERE`-subquery form avoids
+that entirely. (First draft of this very fix wrote a code comment that said
+literally "splits each file naively on literal `;`" — the semicolon *inside
+the backticks* was still a real semicolon character in the file, and broke
+the migration a second time before it ever ran. Re-triggered the gotcha
+while writing prose about the gotcha.)
+
+Verified: restarted the backend twice in a row post-fix; `rag_documents`
+row counts (`resolved_ticket: 9, qa: 3` at the time) were identical before
+and after both restarts, and `python -m pytest tests/ -q` still passes
+(49/49).

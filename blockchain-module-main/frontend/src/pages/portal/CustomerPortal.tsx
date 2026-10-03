@@ -15,7 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   submitChatComplaint, submitVoiceComplaint, transcribeVoiceComplaint,
-  deleteComplaint, getMyComplaints, Complaint,
+  deleteComplaint, getMyComplaints, Complaint, ragQuery,
 } from "@/services/api";
 
 interface ConversationTurn {
@@ -108,6 +108,7 @@ const CustomerPortal = () => {
   const [callActive, setCallActive] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [submittingDraft, setSubmittingDraft] = useState(false);
+  const [routing, setRouting] = useState(false); // classifying a message before deciding Q&A vs. complaint
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [tickets, setTickets] = useState<Complaint[]>([]);
   const [micSupported, setMicSupported] = useState(true);
@@ -202,6 +203,23 @@ const CustomerPortal = () => {
     setCallActive(false);
   }
 
+  // ─── RAG intent routing — Q&A/smalltalk answered directly, no ticket filed ──
+  // Returns the RAG reply if this turn was answered directly (no complaint
+  // should be filed), or null if it should proceed into the complaint flow
+  // (either genuinely a complaint, or routing failed — fails open so a
+  // customer's message is never silently dropped).
+  const routeMessage = async (text: string): Promise<string | null> => {
+    setRouting(true);
+    try {
+      const res = await ragQuery(text);
+      return res.intent === "complaint_intake" ? null : res.reply;
+    } catch {
+      return null;
+    } finally {
+      setRouting(false);
+    }
+  };
+
   // ─── Ticket submission (shared by the voice call and the typed/manual path) ─
   const doSubmit = async (text: string, source: "voice" | "chat") => {
     if (source === "voice") {
@@ -259,8 +277,20 @@ const CustomerPortal = () => {
         continue;
       }
 
-      setDraft({ text: transcript, source: "voice" });
       pushTurn({ id: crypto.randomUUID(), role: "customer", text: transcript });
+
+      const directReply = await routeMessage(transcript);
+      if (!isCurrent()) return;
+      if (directReply !== null) {
+        // A question or smalltalk, not a complaint — answer directly and
+        // keep listening, no draft/confirm/ticket for this turn.
+        pushTurn({ id: crypto.randomUUID(), role: "vema", text: directReply });
+        await speak(directReply);
+        if (!isCurrent()) return;
+        continue;
+      }
+
+      setDraft({ text: transcript, source: "voice" });
 
       // --- confirm loop: read it back, listen for yes / try again ---
       let decision: "yes" | "no" | "unclear" = "unclear";
@@ -369,10 +399,20 @@ const CustomerPortal = () => {
   };
 
   // ─── Draft (review-before-submit) — shared by voice call and typed chat ────
-  const stageChatDraft = () => {
+  const stageChatDraft = async () => {
     const text = message.trim();
-    if (!text || draft || submittingDraft) return;
+    if (!text || draft || submittingDraft || routing) return;
     setMessage("");
+
+    const directReply = await routeMessage(text);
+    if (directReply !== null) {
+      // A question or smalltalk, not a complaint — answer directly, skip
+      // the review-before-submit panel entirely (nothing was ever staged,
+      // so there's no draft to discard).
+      pushTurn({ id: crypto.randomUUID(), role: "customer", text });
+      pushTurn({ id: crypto.randomUUID(), role: "vema", text: directReply });
+      return;
+    }
     setDraft({ text, source: "chat" });
   };
 
@@ -433,7 +473,7 @@ const CustomerPortal = () => {
     }
   };
 
-  const inputsDisabled = recording || transcribing || !!draft || submittingDraft || callActive;
+  const inputsDisabled = recording || transcribing || !!draft || submittingDraft || routing || callActive;
 
   const callStatusText = speaking
     ? "VEMA is speaking…"
@@ -441,6 +481,8 @@ const CustomerPortal = () => {
     ? "Listening — tap Done when you're finished"
     : transcribing
     ? "Transcribing…"
+    : routing
+    ? "Thinking…"
     : submittingDraft
     ? "Filing your complaint…"
     : "One moment…";
@@ -516,6 +558,13 @@ const CustomerPortal = () => {
               <div className="flex justify-start">
                 <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" /> Transcribing…
+                </div>
+              </div>
+            )}
+            {routing && !callActive && (
+              <div className="flex justify-start">
+                <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 size={14} className="animate-spin" /> Thinking…
                 </div>
               </div>
             )}
