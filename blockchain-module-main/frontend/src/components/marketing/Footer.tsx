@@ -1,10 +1,11 @@
 // src/components/marketing/Footer.tsx
+import { Link } from "react-router-dom";
 import { LogoMark } from "@/components/Logo";
 
 const Footer = () => (
   <footer className="border-t border-white/10 bg-navy-950">
     <div className="max-w-7xl mx-auto px-5 sm:px-8 py-12">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-10">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-10">
         <div className="md:col-span-2">
           <div className="flex items-center gap-2 mb-3">
             <LogoMark size={28} />
@@ -23,6 +24,18 @@ const Footer = () => (
             <li>Outage Prediction</li>
             <li>User Complaints (VEMA)</li>
             <li>Notifications</li>
+          </ul>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-white/70 uppercase tracking-wider mb-3">Vendors</p>
+          <ul className="space-y-2 text-sm text-white/50">
+            <li>
+              <Link to="/become-a-vendor" className="hover:text-white transition-colors">
+                Become a Vendor
+              </Link>
+            </li>
+            <li>No account needed — orders by email</li>
           </ul>
         </div>
 

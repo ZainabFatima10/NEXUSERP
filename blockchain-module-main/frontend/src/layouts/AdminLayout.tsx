@@ -4,6 +4,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import Sidebar from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
+import { useSidebarBadges } from "@/hooks/use-sidebar-badges";
 
 const TITLES: Record<string, string> = {
   "/admin": "Dashboard",
@@ -13,6 +14,7 @@ const TITLES: Record<string, string> = {
   "/admin/categories": "Complaint Categories",
   "/admin/knowledge-base": "Knowledge Base",
   "/admin/notifications": "Notifications",
+  "/admin/notifications/preferences": "Notification Preferences",
 };
 
 const AdminLayout = () => {
@@ -20,6 +22,7 @@ const AdminLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const title = TITLES[location.pathname] || "NEXUS ERP";
+  const badges = useSidebarBadges("/admin/tracking", "/admin/vendor-applications");
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -28,6 +31,7 @@ const AdminLayout = () => {
         onToggle={() => setCollapsed((c) => !c)}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
+        badges={badges}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar onOpenMobileSidebar={() => setMobileOpen(true)} title={title} />

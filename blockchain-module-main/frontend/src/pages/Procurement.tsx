@@ -67,6 +67,8 @@ const OrderStepper = ({ stage }: { stage: string }) => {
 interface LocationState {
   prefillItemId?: string;
   prefillQty?: number;
+  prefillVendorId?: string;
+  prefillVendorName?: string;
 }
 
 const Procurement = () => {
@@ -89,6 +91,7 @@ const Procurement = () => {
   const [formQty, setFormQty] = useState(100);
   const [formPrice, setFormPrice] = useState("");
   const [placing, setPlacing] = useState(false);
+  const [vendorFilter, setVendorFilter] = useState<{ id: string; name: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -111,12 +114,17 @@ const Procurement = () => {
   useEffect(() => { load(); }, [load]);
 
   // Prefill the form when arriving via a "Reorder" link from Inventory /
-  // Demand Prediction, and jump straight to the placement tab.
+  // Demand Prediction, or a "Create order with this vendor" link from the
+  // Vendor Catalogue — same navigate()-with-state pattern either way.
   useEffect(() => {
     const state = location.state as LocationState | null;
     if (state?.prefillItemId) {
       setFormItem(state.prefillItemId);
       if (state.prefillQty) setFormQty(state.prefillQty);
+      setTab("place");
+    }
+    if (state?.prefillVendorId) {
+      setVendorFilter({ id: state.prefillVendorId, name: state.prefillVendorName || "selected vendor" });
       setTab("place");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -248,19 +256,39 @@ const Procurement = () => {
           <h2 className="font-heading font-bold text-lg mb-4">New Smart Contract Order</h2>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-muted-foreground mb-1.5">Select Item</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-sm font-medium text-muted-foreground">Select Item</label>
+                {vendorFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setVendorFilter(null)}
+                    className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20"
+                    title="Clear vendor filter"
+                  >
+                    Filtered to {vendorFilter.name} ✕
+                  </button>
+                )}
+              </div>
               <select
                 value={formItem}
                 onChange={(e) => setFormItem(e.target.value)}
                 className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
               >
                 <option value="">— Select an item —</option>
-                {items.map((i) => (
-                  <option key={i.item_id} value={i.item_id}>
-                    {i.name} (Stock: {i.current_stock} {i.unit})
-                  </option>
-                ))}
+                {items
+                  .filter((i) => !vendorFilter || i.vendor_id === vendorFilter.id)
+                  .map((i) => (
+                    <option key={i.item_id} value={i.item_id}>
+                      {i.name} (Stock: {i.current_stock} {i.unit})
+                    </option>
+                  ))}
               </select>
+              {vendorFilter && items.filter((i) => i.vendor_id === vendorFilter.id).length === 0 && (
+                <p className="text-xs text-warning mt-1.5">
+                  {vendorFilter.name} has no items in internal inventory yet — an admin needs to add one
+                  and assign this vendor before it can be ordered here.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Quantity</label>

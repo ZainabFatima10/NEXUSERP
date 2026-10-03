@@ -49,7 +49,17 @@ python-multipart==0.0.9   # required by FastAPI for UploadFile/Form (voice compl
 # kokoro>=0.7.0
 # soundfile==0.12.1
 #
-# RAG dataset ingestion (rag/ingest.py) — CSV/JSON/JSONL need nothing extra;
-# .xlsx needs openpyxl. Optional: ingest_file() skips .xlsx files with a
-# clear message (never crashes the batch) if it isn't installed.
-# openpyxl==3.1.5
+# .xlsx read/write — rag/ingest.py's .xlsx ingestion (optional there) and
+# vendor_catalogue_parser.py's vendor catalogue upload/template (required).
+openpyxl==3.1.5
+
+# Phase 2 — real on-chain ShipmentEscrow contract (see
+# blockchain-module-main/hardhat/ and shipment_chain_service.py). Talks to
+# either a local Hardhat node or Sepolia testnet via the same web3.py calls
+# -- only CHAIN_RPC_URL/CHAIN_NETWORK/CONTRACT_ADDRESS change. Pinned to the
+# 6.x line (not 7.x) to match the tutorials/docs this was built against.
+web3==6.20.3
+# `cryptography` (used for Fernet-encrypting per-user wallet private keys at
+# rest in user_wallets.encrypted_private_key) is already pulled in by
+# python-jose[cryptography] above — not re-pinned here to avoid a second,
+# possibly conflicting version resolution.

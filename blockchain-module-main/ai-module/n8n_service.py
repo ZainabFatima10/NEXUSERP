@@ -24,6 +24,12 @@ N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
 N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL = os.getenv("N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL", "")
 N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 
+# Phase 2 — vendor_orders flow (distinct from the Phase 1 auto-reorder
+# webhooks above; see n8n-workflows/vendor-order-*.workflow.json).
+N8N_VENDOR_ORDER_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_WEBHOOK_URL", "")
+N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL", "")
+N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL", "")
+
 
 def _post_webhook(url: str, payload: dict, *, dev_message: str) -> dict:
     """
@@ -133,3 +139,80 @@ def trigger_contract_confirmation_email(
         f"  Invoice PDF: {invoice_pdf_url}\n"
     )
     return _post_webhook(N8N_CONTRACT_CONFIRMATION_WEBHOOK_URL, payload, dev_message=dev_message)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Phase 2 — vendor_orders (order -> accept/reject -> contract -> shipment)
+# ─────────────────────────────────────────────────────────────────────────
+
+def trigger_vendor_order_email(
+    order: dict,
+    items: list,
+    accept_url: str,
+    reject_url: str,
+    expires_at: str,
+) -> dict:
+    """POST the new-order payload to n8n — itemized bill + Accept/Reject,
+    for an order placed against the vendor's own catalogue (vendor_items),
+    distinct from the Phase 1 low-stock auto-reorder flow above."""
+    payload = jsonable_encoder({
+        "order_id":    order["id"],
+        "order_code":  order["order_code"],
+        "vendor_name": order["vendor_name"],
+        "vendor_email": order["vendor_email"],
+        "destination": order["destination_name"],
+        "requested_delivery_date": str(order["requested_delivery_date"]) if order.get("requested_delivery_date") else None,
+        "items": items,
+        "subtotal": float(order["subtotal"]),
+        "total_amount": float(order["total_amount"]),
+        "currency": order["currency"],
+        "expires_at": str(expires_at),
+        "accept_url": accept_url,
+        "reject_url": reject_url,
+    })
+    dev_message = (
+        f"\n[DEV MODE — n8n not configured] Would POST vendor order email for "
+        f"{order['order_code']} to {order['vendor_email']}\n"
+        f"  Accept: {accept_url}\n"
+        f"  Reject: {reject_url}\n"
+    )
+    return _post_webhook(N8N_VENDOR_ORDER_WEBHOOK_URL, payload, dev_message=dev_message)
+
+
+def trigger_vendor_order_shipment_link_email(
+    order: dict,
+    shipment_update_url: str,
+) -> dict:
+    """Sent right after the vendor accepts — gives them the no-login link
+    to report Dispatched / In Transit / Out for Delivery updates."""
+    payload = jsonable_encoder({
+        "order_id":    order["id"],
+        "order_code":  order["order_code"],
+        "vendor_name": order["vendor_name"],
+        "vendor_email": order["vendor_email"],
+        "shipment_update_url": shipment_update_url,
+    })
+    dev_message = (
+        f"\n[DEV MODE — n8n not configured] Would POST shipment-link email for "
+        f"{order['order_code']} to {order['vendor_email']}\n"
+        f"  Shipment update link: {shipment_update_url}\n"
+    )
+    return _post_webhook(N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL, payload, dev_message=dev_message)
+
+
+def trigger_vendor_order_payment_released_email(order: dict) -> dict:
+    """Sent once the contract executes and the (mocked, Phase 4-real-later)
+    payment is captured — confirms to the vendor that payment is released."""
+    payload = jsonable_encoder({
+        "order_id":    order["id"],
+        "order_code":  order["order_code"],
+        "vendor_name": order["vendor_name"],
+        "vendor_email": order["vendor_email"],
+        "total_amount": float(order["total_amount"]),
+        "currency": order["currency"],
+    })
+    dev_message = (
+        f"\n[DEV MODE — n8n not configured] Would POST payment-released email for "
+        f"{order['order_code']} to {order['vendor_email']}\n"
+    )
+    return _post_webhook(N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL, payload, dev_message=dev_message)

@@ -5,6 +5,12 @@ export interface ToastOptions {
   title: string;
   description?: string;
   variant?: "default" | "destructive" | "success";
+  // Phase 3: requires_action notifications stay until dismissed (no
+  // auto-timeout) and carry a deep-link action button. Both optional —
+  // every existing toast({ title, description, variant }) call keeps
+  // working exactly as before.
+  persist?: boolean;
+  action?: { label: string; onClick: () => void };
 }
 
 interface ToastItem extends ToastOptions {
@@ -31,7 +37,9 @@ export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
     (opts: ToastOptions) => {
       const id = ++idRef.current;
       setToasts((prev) => [...prev, { ...opts, id }]);
-      window.setTimeout(() => dismiss(id), 5000);
+      if (!opts.persist) {
+        window.setTimeout(() => dismiss(id), 5000);
+      }
     },
     [dismiss]
   );
@@ -39,12 +47,17 @@ export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
   return (
     <ToastContext.Provider value={{ toast }}>
       {children}
-      <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-sm pointer-events-none">
+      <div
+        className="fixed top-4 right-4 z-[100] flex flex-col gap-2 w-full max-w-sm pointer-events-none"
+        aria-live="polite"
+        role="region"
+        aria-label="Notifications"
+      >
         {toasts.map((t) => (
           <div
             key={t.id}
             role="status"
-            onClick={() => dismiss(t.id)}
+            onClick={() => !t.action && dismiss(t.id)}
             className={`pointer-events-auto glass-card p-4 pr-8 relative animate-slide-up cursor-pointer border-l-4 ${
               t.variant === "destructive"
                 ? "border-l-destructive"
@@ -56,6 +69,18 @@ export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
             <p className="text-sm font-semibold text-foreground">{t.title}</p>
             {t.description && (
               <p className="text-xs text-muted-foreground mt-0.5">{t.description}</p>
+            )}
+            {t.action && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  t.action!.onClick();
+                  dismiss(t.id);
+                }}
+                className="mt-2 text-xs font-semibold text-primary hover:underline"
+              >
+                {t.action.label} →
+              </button>
             )}
             <button
               onClick={(e) => {

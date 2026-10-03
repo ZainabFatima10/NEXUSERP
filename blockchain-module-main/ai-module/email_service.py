@@ -247,6 +247,172 @@ def send_customer_resolution_email(
     return _send(customer_email, f"Ticket {ticket_code} Resolved — NEXUS ERP", html)
 
 
+def send_vendor_email_verification(
+    to_email: str,
+    company_name: str,
+    verify_token: str,
+) -> bool:
+    """Become-a-Vendor Step 2: verify the order email before the application
+    becomes reviewable by an admin."""
+    verify_url = f"{BASE_URL}/api/public/vendors/verify-email/{verify_token}"
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Confirm Your Order Email</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Vendor Registration</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{company_name}</b> team,</p>
+        <p style="color:#555;line-height:1.6;">
+          Thanks for applying to become a NEXUS ERP vendor. This address is the one we'll
+          send purchase orders to if you're approved, so please confirm it's correct and
+          monitored by clicking below.
+        </p>
+        <div style="text-align:center;margin:28px 0;">
+          <a href="{verify_url}"
+             style="background:#001F54;color:#fff;padding:14px 36px;border-radius:24px;
+                    text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+            Verify This Email
+          </a>
+        </div>
+        <p style="color:#888;font-size:12px;">
+          Your application is still submitted either way — this just helps our admin team
+          vet it faster. If you didn't apply, you can ignore this email.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(to_email, "Confirm your order email — NEXUS ERP Vendor Registration", html)
+
+
+def send_vendor_application_ack(
+    to_email: str,
+    company_name: str,
+    reference_code: str,
+) -> bool:
+    """Become-a-Vendor Step 6: acknowledgement after a successful submit."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Application Received</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Vendor Registration</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{company_name}</b> team,</p>
+        <p style="color:#555;line-height:1.6;">
+          We've received your vendor application. Your reference number is:
+        </p>
+        <div style="background:#f0f4fb;border-radius:8px;padding:16px;margin:16px 0;
+                    font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;
+                    color:#001F54;text-align:center;">
+          {reference_code}
+        </div>
+        <p style="color:#555;line-height:1.6;">
+          <b>What happens next:</b> our procurement team reviews your documents, catalogue
+          and commercial terms. You'll get an email the moment a decision is made — typically
+          within a few business days. No action is needed from you until then.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(to_email, f"Application Received — {reference_code}", html)
+
+
+def send_vendor_approved_email(
+    to_email: str,
+    company_name: str,
+    order_email: str,
+) -> bool:
+    """Vendor approved: the vendor never gets a login — tell them what to expect instead."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#2e7d5e;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">🎉 You're an Approved Vendor</h2>
+        <p style="color:rgba(255,255,255,0.85);margin:4px 0 0;font-size:13px;">NEXUS ERP · PowerGrid Optimizer</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{company_name}</b> team,</p>
+        <p style="color:#555;line-height:1.6;">
+          Your vendor application has been approved. Your catalogue is now visible to our
+          procurement team, and purchase order requests will be sent to
+          <b>{order_email}</b> by email — you don't need to log in anywhere; every order
+          comes with its own Accept/Reject link.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(to_email, "Vendor Application Approved — NEXUS ERP", html)
+
+
+def send_vendor_rejected_email(
+    to_email: str,
+    company_name: str,
+    reason: str,
+) -> bool:
+    """Vendor rejected — always includes the reason given by the reviewing admin."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Application Update</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Vendor Registration</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{company_name}</b> team,</p>
+        <p style="color:#555;line-height:1.6;">
+          After review, we're not able to approve your vendor application at this time.
+        </p>
+        <div style="background:#f0f4fb;border-radius:8px;padding:16px;margin:16px 0;color:#333;">
+          {reason}
+        </div>
+        <p style="color:#888;font-size:12px;">
+          You're welcome to re-apply once the issue above is addressed.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(to_email, "Vendor Application — Update", html)
+
+
+def send_vendor_needs_info_email(
+    to_email: str,
+    company_name: str,
+    note: str,
+) -> bool:
+    """Admin asked for more information before a decision can be made."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#f59e0b;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">A Little More Information Needed</h2>
+        <p style="color:rgba(255,255,255,0.85);margin:4px 0 0;font-size:13px;">NEXUS ERP · Vendor Registration</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{company_name}</b> team,</p>
+        <p style="color:#555;line-height:1.6;">
+          Before we can make a decision on your vendor application, we need a bit more
+          information:
+        </p>
+        <div style="background:#f0f4fb;border-radius:8px;padding:16px;margin:16px 0;color:#333;">
+          {note}
+        </div>
+        <p style="color:#888;font-size:12px;">
+          Please reply to this email with the requested details and we'll continue the review.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(to_email, "Action Needed on Your Vendor Application — NEXUS ERP", html)
+
+
 def send_internal_notification_email(
     to_email: str,
     subject: str,

@@ -1,0 +1,61 @@
+{
+  "id": "vendor-order-shipment-link-wf",
+  "name": "NEXUS ERP — Vendor Shipment Link (Phase 2)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vendor-order-shipment-link",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-vendor-order-shipment-link",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "vendor-order-shipment-link-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2",
+          "name": "Nexus Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.SMTP_USER}}",
+        "toEmail": "={{$json.body.vendor_email}}",
+        "subject": "=Order {{$json.body.order_code}} Accepted — Your Shipment Update Link",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family:'DM Sans',Arial,sans-serif;background:#f4f7fb;padding:32px 16px;\"><div style=\"max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 8px 32px rgba(0,0,0,0.08);\"><h1 style=\"color:#001F54;font-size:22px;margin:0 0 4px;\">NEXUS ERP</h1><p style=\"color:#888;font-size:13px;margin:0 0 24px;\">PowerGrid Optimizer — Shipment Updates</p><p style=\"color:#333;line-height:1.6;\">Dear {{$json.body.vendor_name}},</p><p style=\"color:#333;line-height:1.6;\">Thanks for accepting order <strong>{{$json.body.order_code}}</strong>. Use the link below any time over the next 30 days to tell us when it's dispatched and where it is in transit — no login needed.</p><div style=\"text-align:center;margin:28px 0 12px;\"><a href=\"{{$json.body.shipment_update_url}}\" style=\"display:inline-block;background:#001F54;color:#fff;text-decoration:none;font-weight:700;padding:14px 36px;border-radius:24px;\">📦 Report Shipment Status</a></div><p style=\"color:#aaa;font-size:11px;margin-top:32px;\">Keep this link — it's reusable for every update on this order (Dispatched, In Transit, Out for Delivery) until it's delivered.</p></div></div>",
+        "options": {}
+      },
+      "id": "email-vendor-order-shipment-link",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [520, 300],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Nexus SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Send Email", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

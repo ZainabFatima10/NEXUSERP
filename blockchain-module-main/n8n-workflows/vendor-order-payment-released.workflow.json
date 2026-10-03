@@ -1,0 +1,61 @@
+{
+  "id": "vendor-order-payment-released-wf",
+  "name": "NEXUS ERP — Vendor Payment Released (Phase 2)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vendor-order-payment-released",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-vendor-order-payment-released",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "vendor-order-payment-released-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2",
+          "name": "Nexus Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.SMTP_USER}}",
+        "toEmail": "={{$json.body.vendor_email}}",
+        "subject": "=Payment Released — Order {{$json.body.order_code}}",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family:'DM Sans',Arial,sans-serif;background:#f4f7fb;padding:32px 16px;\"><div style=\"max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 8px 32px rgba(0,0,0,0.08);\"><h1 style=\"color:#001F54;font-size:22px;margin:0 0 4px;\">NEXUS ERP</h1><p style=\"color:#888;font-size:13px;margin:0 0 24px;\">PowerGrid Optimizer — Payment Confirmation</p><div style=\"background:#f0f9f4;border:1px solid #cdeedb;border-radius:12px;padding:16px 20px;margin-bottom:24px;\"><p style=\"color:#2e7d5e;font-weight:700;margin:0;font-size:15px;\">✅ Receipt Approved — Payment Released</p></div><p style=\"color:#333;line-height:1.6;\">Dear {{$json.body.vendor_name}},</p><p style=\"color:#333;line-height:1.6;\">The orderer has confirmed and approved receipt of order <strong>{{$json.body.order_code}}</strong>. The smart contract has executed and payment of <strong>{{$json.body.currency}} {{$json.body.total_amount}}</strong> has been released.</p><p style=\"color:#aaa;font-size:11px;margin-top:32px;\">This is an automated confirmation — no further action is needed.</p></div></div>",
+        "options": {}
+      },
+      "id": "email-vendor-order-payment-released",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [520, 300],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Nexus SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Send Email", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

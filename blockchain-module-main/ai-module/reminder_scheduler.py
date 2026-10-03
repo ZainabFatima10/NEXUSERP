@@ -15,6 +15,9 @@ from sqlalchemy import text
 from database import db_session
 from notification_service import notify_role
 from taxonomy import REMINDER_INTERVAL_MINUTES
+import shipment_chain_service
+import vendor_orders
+import notification_engine
 
 _scheduler = None
 
@@ -65,14 +68,63 @@ def check_and_fire_reminders():
             )
 
 
+def _run_vendor_order_jobs():
+    """Phase 2: vendor order expiry/reminders + chain tx retry. Each job
+    gets its own db_session so one failing job can't take the others down
+    with it (match the per-job isolation check_and_fire_reminders doesn't
+    need, since it's the only VEMA job, but this scheduler now runs several
+    unrelated job families in sequence)."""
+    for job in (
+        vendor_orders.check_vendor_order_expiry,
+        vendor_orders.check_vendor_order_reminders,
+        vendor_orders.check_arrival_reminders,
+        vendor_orders.check_approval_reminders,
+        vendor_orders.check_delayed_shipments,
+        vendor_orders.check_chain_health,
+    ):
+        try:
+            with db_session() as db:
+                job(db)
+        except Exception as e:
+            print(f"[WARN] reminder_scheduler: {job.__name__} failed: {e}")
+
+
+def _run_chain_retry_job():
+    try:
+        with db_session() as db:
+            n = shipment_chain_service.retry_pending_chain_txs(db)
+            if n:
+                print(f"[OK] retry_pending_chain_txs: retried {n} pending transaction(s).")
+    except Exception as e:
+        print(f"[WARN] reminder_scheduler: chain tx retry failed: {e}")
+
+
+def _run_notification_outbox_job():
+    """Phase 3: sends queued staff emails (notification_outbox), with
+    backoff retry on failure — see notification_engine.py."""
+    try:
+        with db_session() as db:
+            n = notification_engine.process_notification_outbox(db)
+            if n:
+                print(f"[OK] process_notification_outbox: sent {n} queued email(s).")
+    except Exception as e:
+        print(f"[WARN] reminder_scheduler: notification outbox processing failed: {e}")
+
+
 def start_scheduler():
     global _scheduler
     if _scheduler is not None:
         return _scheduler
     _scheduler = BackgroundScheduler(daemon=True)
     _scheduler.add_job(check_and_fire_reminders, "interval", minutes=1, id="vema_reminder_check", max_instances=1)
+    _scheduler.add_job(_run_vendor_order_jobs, "interval", minutes=5, id="vendor_order_checks", max_instances=1)
+    _scheduler.add_job(_run_chain_retry_job, "interval", minutes=2, id="chain_tx_retry", max_instances=1)
+    _scheduler.add_job(_run_notification_outbox_job, "interval", minutes=1, id="notification_outbox", max_instances=1)
     _scheduler.start()
     print("[OK] VEMA reminder scheduler started (checks every 1 minute).")
+    print("[OK] Vendor order expiry/reminder checks started (every 5 minutes).")
+    print("[OK] Chain tx retry job started (every 2 minutes).")
+    print("[OK] Notification outbox job started (every 1 minute).")
     return _scheduler
 
 

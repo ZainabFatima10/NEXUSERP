@@ -3,6 +3,7 @@ import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard, Package, CloudLightning, MessageSquare,
   Bell, ChevronLeft, ChevronRight, LogOut, TrendingUp, ShoppingCart, BookOpen, Database,
+  UserCheck, Store, Truck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -22,6 +23,10 @@ interface Props {
   onCloseMobile: () => void;
   navItems?: NavItem[];
   brandSubtitle?: string;
+  /** Keyed by NavItem.to — a small count badge next to that item (e.g.
+   * Order Tracking's action-needed count, Vendor Applications' pending
+   * count). Kept separate from NAV_ITEMS since those are static consts. */
+  badges?: Record<string, number>;
 }
 
 export const ADMIN_NAV_ITEMS: NavItem[] = [
@@ -29,6 +34,9 @@ export const ADMIN_NAV_ITEMS: NavItem[] = [
   { to: "/admin/inventory", label: "Inventory", icon: Package },
   { to: "/admin/demand-prediction", label: "Demand Prediction", icon: TrendingUp },
   { to: "/admin/procurement", label: "Procurement", icon: ShoppingCart },
+  { to: "/admin/vendor-applications", label: "Vendor Applications", icon: UserCheck },
+  { to: "/admin/vendor-catalogue", label: "Vendor Catalogue", icon: Store },
+  { to: "/admin/tracking", label: "Order Tracking", icon: Truck },
   { to: "/admin/outage-prediction", label: "Outage Prediction", icon: CloudLightning },
   { to: "/admin/complaints", label: "User Complaints", icon: MessageSquare },
   { to: "/admin/categories", label: "Complaint Categories", icon: BookOpen },
@@ -43,6 +51,7 @@ const Sidebar = ({
   onCloseMobile,
   navItems = ADMIN_NAV_ITEMS,
   brandSubtitle = "PowerGrid Optimizer",
+  badges = {},
 }: Props) => {
   const { logout } = useAuth();
 
@@ -82,7 +91,12 @@ const Sidebar = ({
                   <span className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-full bg-accent-cyan" />
                 )}
                 <item.icon size={18} className={`flex-shrink-0 ${isActive ? "text-accent-cyan" : ""}`} />
-                {!collapsed && <span className="truncate">{item.label}</span>}
+                {!collapsed && <span className="truncate flex-1">{item.label}</span>}
+                {!!badges[item.to] && (
+                  <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                    {badges[item.to] > 99 ? "99+" : badges[item.to]}
+                  </span>
+                )}
               </>
             )}
           </NavLink>

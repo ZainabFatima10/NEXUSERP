@@ -8,6 +8,9 @@ import ProcurementLayout from "@/layouts/ProcurementLayout";
 import CRLayout from "@/layouts/CRLayout";
 
 import Landing from "@/pages/marketing/Landing";
+import BecomeVendor from "@/pages/marketing/BecomeVendor";
+import VendorRespond from "@/pages/marketing/VendorRespond";
+import VendorShipmentUpdate from "@/pages/marketing/VendorShipmentUpdate";
 import Login from "@/pages/auth/Login";
 import Signup from "@/pages/auth/Signup";
 import Dashboard from "@/pages/Dashboard";
@@ -17,9 +20,15 @@ import Procurement from "@/pages/Procurement";
 import OutagePrediction from "@/pages/OutagePrediction";
 import Complaints from "@/pages/Complaints";
 import Notifications from "@/pages/Notifications";
+import NotificationPreferences from "@/pages/NotificationPreferences";
 import CategoryReference from "@/pages/CategoryReference";
 import RagAdmin from "@/pages/RagAdmin";
 import NotFound from "@/pages/NotFound";
+import VendorApplications from "@/pages/vendors/VendorApplications";
+import VendorCatalogue from "@/pages/vendors/VendorCatalogue";
+import PlaceVendorOrder from "@/pages/vendors/PlaceVendorOrder";
+import TrackingList from "@/pages/vendors/TrackingList";
+import TrackingDetail from "@/pages/vendors/TrackingDetail";
 
 import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
 import ApprovalsQueue from "@/pages/procurement/ApprovalsQueue";
@@ -36,6 +45,9 @@ function App() {
           <Routes>
             {/* Public marketing site */}
             <Route path="/" element={<Landing />} />
+            <Route path="/become-a-vendor" element={<BecomeVendor />} />
+            <Route path="/vendor/respond" element={<VendorRespond />} />
+            <Route path="/vendor/shipment" element={<VendorShipmentUpdate />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
 
@@ -46,11 +58,17 @@ function App() {
                 <Route path="inventory" element={<Inventory />} />
                 <Route path="demand-prediction" element={<DemandPrediction />} />
                 <Route path="procurement" element={<Procurement />} />
+                <Route path="vendor-applications" element={<VendorApplications />} />
+                <Route path="vendor-catalogue" element={<VendorCatalogue />} />
+                <Route path="place-order" element={<PlaceVendorOrder />} />
+                <Route path="tracking" element={<TrackingList />} />
+                <Route path="tracking/:orderId" element={<TrackingDetail />} />
                 <Route path="outage-prediction" element={<OutagePrediction />} />
                 <Route path="complaints" element={<Complaints />} />
                 <Route path="categories" element={<CategoryReference />} />
                 <Route path="knowledge-base" element={<RagAdmin />} />
                 <Route path="notifications" element={<Notifications />} />
+                <Route path="notifications/preferences" element={<NotificationPreferences />} />
               </Route>
             </Route>
 
@@ -60,7 +78,13 @@ function App() {
                 <Route index element={<ProcurementDashboard />} />
                 <Route path="approvals" element={<ApprovalsQueue />} />
                 <Route path="vendors" element={<VendorCommunication />} />
+                <Route path="vendor-applications" element={<VendorApplications />} />
+                <Route path="vendor-catalogue" element={<VendorCatalogue />} />
+                <Route path="place-order" element={<PlaceVendorOrder />} />
+                <Route path="tracking" element={<TrackingList />} />
+                <Route path="tracking/:orderId" element={<TrackingDetail />} />
                 <Route path="notifications" element={<Notifications />} />
+                <Route path="notifications/preferences" element={<NotificationPreferences />} />
               </Route>
             </Route>
 
@@ -71,6 +95,7 @@ function App() {
                 <Route path="tickets" element={<TicketLog />} />
                 <Route path="categories" element={<CategoryReference />} />
                 <Route path="notifications" element={<Notifications />} />
+                <Route path="notifications/preferences" element={<NotificationPreferences />} />
               </Route>
             </Route>
 

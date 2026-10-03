@@ -71,6 +71,9 @@ const Navbar = () => {
           </nav>
 
           <div className="hidden md:flex items-center gap-3">
+            <Link to="/become-a-vendor" className="text-sm text-white/80 hover:text-white transition-colors px-3 py-2">
+              Become a Vendor
+            </Link>
             <Link to="/login" className="text-sm text-white/80 hover:text-white transition-colors px-3 py-2">
               Login
             </Link>
@@ -103,6 +106,13 @@ const Navbar = () => {
                 {l.label}
               </a>
             ))}
+            <Link
+              to="/become-a-vendor"
+              onClick={() => setOpen(false)}
+              className="block text-center text-sm text-white/90 border border-white/20 rounded-lg py-2"
+            >
+              Become a Vendor
+            </Link>
             <div className="flex gap-3 pt-2">
               <Link to="/login" className="flex-1 text-center text-sm text-white/90 border border-white/20 rounded-lg py-2">
                 Login

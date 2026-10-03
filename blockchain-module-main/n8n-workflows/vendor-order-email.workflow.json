@@ -1,0 +1,61 @@
+{
+  "id": "vendor-order-email-wf",
+  "name": "NEXUS ERP — Vendor Order Email (Phase 2)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vendor-order-email",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-vendor-order-email",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "vendor-order-email-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2",
+          "name": "Nexus Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.SMTP_USER}}",
+        "toEmail": "={{$json.body.vendor_email}}",
+        "subject": "=New Order {{$json.body.order_code}} — Action Required (Accept or Reject)",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family:'DM Sans',Arial,sans-serif;background:#f4f7fb;padding:32px 16px;\"><div style=\"max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 8px 32px rgba(0,0,0,0.08);\"><h1 style=\"color:#001F54;font-size:22px;margin:0 0 4px;\">NEXUS ERP</h1><p style=\"color:#888;font-size:13px;margin:0 0 24px;\">PowerGrid Optimizer — Vendor Catalogue Order</p><p style=\"color:#333;line-height:1.6;\">Dear {{$json.body.vendor_name}},</p><p style=\"color:#333;line-height:1.6;\">A new order has been placed against your catalogue. Please review and respond before it expires.</p><table style=\"width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;\"><tr><td style=\"padding:6px 0;color:#888;\">Order</td><td style=\"padding:6px 0;text-align:right;font-weight:600;color:#001F54;\">{{$json.body.order_code}}</td></tr><tr><td style=\"padding:6px 0;color:#888;\">Destination</td><td style=\"padding:6px 0;text-align:right;\">{{$json.body.destination}}</td></tr><tr><td style=\"padding:6px 0;color:#888;\">Requested Delivery</td><td style=\"padding:6px 0;text-align:right;\">{{$json.body.requested_delivery_date || 'Not specified'}}</td></tr><tr><td style=\"padding:6px 0;color:#888;\">Respond By</td><td style=\"padding:6px 0;text-align:right;color:#c62828;\">{{$json.body.expires_at}}</td></tr></table><table style=\"width:100%;border-collapse:collapse;margin:12px 0 20px;font-size:13px;border-top:1px solid #eee;\"><tr style=\"color:#888;\"><td style=\"padding:8px 0;\">Item</td><td style=\"padding:8px 0;text-align:center;\">Qty</td><td style=\"padding:8px 0;text-align:right;\">Unit Price</td><td style=\"padding:8px 0;text-align:right;\">Total</td></tr>{{$json.body.items.map(it => `<tr style=\"border-top:1px solid #f0f0f0;\"><td style=\"padding:8px 0;\">${it.name}</td><td style=\"padding:8px 0;text-align:center;\">${it.quantity} ${it.unit}</td><td style=\"padding:8px 0;text-align:right;\">${it.unit_price}</td><td style=\"padding:8px 0;text-align:right;\">${it.line_total}</td></tr>`).join('')}}<tr><td colspan=\"3\" style=\"padding:12px 0 0;text-align:right;font-weight:700;color:#001F54;\">Total ({{$json.body.currency}})</td><td style=\"padding:12px 0 0;text-align:right;font-weight:700;color:#001F54;\">{{$json.body.total_amount}}</td></tr></table><div style=\"text-align:center;margin:32px 0 12px;\"><a href=\"{{$json.body.accept_url}}\" style=\"display:inline-block;background:#2e7d5e;color:#fff;text-decoration:none;font-weight:700;padding:14px 36px;border-radius:24px;margin:0 8px;\">✅ Accept</a><a href=\"{{$json.body.reject_url}}\" style=\"display:inline-block;background:#c62828;color:#fff;text-decoration:none;font-weight:700;padding:14px 36px;border-radius:24px;margin:0 8px;\">❌ Reject</a></div><p style=\"color:#aaa;font-size:11px;margin-top:32px;\">This link is unique to this order. Accepting creates a smart contract and authorizes payment, held until delivery is confirmed and approved.</p></div></div>",
+        "options": {}
+      },
+      "id": "email-vendor-order",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [520, 300],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Nexus SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Send Email", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

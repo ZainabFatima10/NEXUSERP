@@ -18,6 +18,7 @@ const TITLES: Record<string, string> = {
   "/cr/tickets": "All Tickets",
   "/cr/categories": "Complaint Categories",
   "/cr/notifications": "Notifications",
+  "/cr/notifications/preferences": "Notification Preferences",
 };
 
 const CRLayout = () => {

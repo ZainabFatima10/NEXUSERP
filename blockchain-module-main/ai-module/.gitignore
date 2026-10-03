@@ -6,4 +6,5 @@ __pycache__/
 data/raw/
 data/processed/
 data/inventory/current_orders.json
+data/vendor_documents/
 .DS_Store

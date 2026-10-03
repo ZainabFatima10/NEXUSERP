@@ -74,6 +74,7 @@ export interface InventoryItem {
   daily_consumption: number;
   reorder_quantity: number;
   unit_price?: number | null;
+  vendor_id?: string | null;
   vendor_name: string;
   vendor_email: string;
   status: "OK" | "Low" | "Critical" | "Out of Stock";
@@ -393,28 +394,134 @@ export interface Notification {
   is_read: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
+  // Phase 3 fields — present on anything created via notification_engine.notify();
+  // older rows (and every pre-Phase-3 caller) simply leave these null/default.
+  type?: string | null;
+  severity?: "info" | "success" | "warning" | "critical";
+  entity_type?: string | null;
+  entity_id?: string | null;
+  action_url?: string | null;
+  action_label?: string | null;
+  requires_action?: boolean;
+  read_at?: string | null;
+  resolved_at?: string | null;
+  archived_at?: string | null;
 }
 
 export const getNotifications = (params?: {
-  user_id?: string;
   unread?: boolean;
   category?: string;
+  severity?: string;
+  requires_action?: boolean;
+  archived?: boolean;
+  limit?: number;
+  offset?: number;
+  /** @deprecated the backend now derives the user from the auth token — kept
+   * only so no existing call site breaks; it's ignored server-side. */
+  user_id?: string;
 }) => {
   const q = new URLSearchParams();
-  if (params?.user_id) q.set("user_id", params.user_id);
   if (params?.unread) q.set("unread", "true");
   if (params?.category) q.set("category", params.category);
+  if (params?.severity) q.set("severity", params.severity);
+  if (params?.requires_action !== undefined) q.set("requires_action", String(params.requires_action));
+  if (params?.archived) q.set("archived", "true");
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.offset) q.set("offset", String(params.offset));
   return apiFetch<{ unread_count: number; notifications: Notification[] }>(
     `/api/notifications?${q}`
   );
 };
 
+export const getUnreadCount = () => apiFetch<{ count: number }>("/api/notifications/unread-count");
+
 export const markNotificationRead = (id: string) =>
   apiFetch(`/api/notifications/${id}/read`, { method: "PATCH" });
 
-export const markAllNotificationsRead = (userId?: string) => {
-  const q = userId ? `?user_id=${userId}` : "";
+export const markAllNotificationsRead = (category?: string) => {
+  const q = category ? `?category=${encodeURIComponent(category)}` : "";
   return apiFetch(`/api/notifications/mark-all-read${q}`, { method: "PATCH" });
+};
+
+export const archiveNotification = (id: string) =>
+  apiFetch<{ message: string }>(`/api/notifications/${id}/archive`, { method: "POST" });
+
+export interface NotificationPreference {
+  type: string;
+  category: string;
+  severity: string;
+  locked: boolean;
+  in_app: boolean;
+  email: boolean;
+  has_email: boolean;
+}
+
+export const getNotificationPreferences = () =>
+  apiFetch<{ preferences: NotificationPreference[] }>("/api/notifications/preferences");
+
+export const updateNotificationPreference = (type: string, in_app: boolean, email: boolean) =>
+  apiFetch<{ message: string; locked: boolean }>("/api/notifications/preferences", {
+    method: "PUT",
+    body: JSON.stringify({ type, in_app, email }),
+  });
+
+/**
+ * Live notification stream — Server-Sent Events, with a 15s-poll fallback
+ * if SSE can't connect (proxies/older browsers). Returns an unsubscribe
+ * function; call it on unmount.
+ */
+export const subscribeToNotifications = (onNotification: (n: Notification) => void): (() => void) => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
+  if (!token) return () => {};
+
+  let stopped = false;
+  let pollId: ReturnType<typeof setInterval> | null = null;
+  let es: EventSource | null = null;
+  let seenIds = new Set<string>();
+
+  const startPolling = () => {
+    if (pollId) return;
+    pollId = setInterval(async () => {
+      try {
+        const res = await getNotifications({ limit: 10 });
+        for (const n of res.notifications) {
+          if (!seenIds.has(n.id)) {
+            seenIds.add(n.id);
+            onNotification(n);
+          }
+        }
+      } catch {
+        // silent — next tick retries
+      }
+    }, 15000);
+  };
+
+  try {
+    es = new EventSource(`${API_BASE_URL}/api/notifications/stream?token=${encodeURIComponent(token)}`);
+    es.onmessage = (ev) => {
+      try {
+        const n = JSON.parse(ev.data) as Notification;
+        seenIds.add(n.id);
+        onNotification(n);
+      } catch {
+        // ignore malformed event
+      }
+    };
+    es.onerror = () => {
+      if (stopped) return;
+      es?.close();
+      es = null;
+      startPolling();
+    };
+  } catch {
+    startPolling();
+  }
+
+  return () => {
+    stopped = true;
+    es?.close();
+    if (pollId) clearInterval(pollId);
+  };
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -660,3 +767,544 @@ export interface SimilarCase {
 
 export const getSimilarCases = (ticketId: string) =>
   apiFetch<{ cases: SimilarCase[] }>(`/api/complaints/${ticketId}/similar`);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VENDORS — registration, vetting, approved catalogue
+// Vendors never get a login: everything here is either the public
+// "Become a Vendor" form, or Admin/Procurement Manager review screens.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface VendorApplicationItemInput {
+  name: string;
+  sku?: string;
+  category?: string;
+  description?: string;
+  unit: string;
+  unit_price: number;
+  moq?: number;
+  lead_time_days?: number;
+}
+
+export interface VendorApplicationPayload {
+  legal_company_name: string;
+  trade_name?: string;
+  business_type: string;
+  ntn: string;
+  strn?: string;
+  secp_number?: string;
+  year_established?: number;
+  employee_range?: string;
+  website?: string;
+  categories: string[];
+
+  contact_name: string;
+  contact_designation?: string;
+  order_email: string;
+  mobile: string;
+  alternate_phone?: string;
+  address: string;
+  city: string;
+  province: string;
+  postal_code?: string;
+  coverage_provinces: string[];
+  coverage_cities: string[];
+
+  lead_time_days?: number;
+  payment_terms?: string;
+  min_order_value?: number;
+  warranty?: string;
+  bank_name?: string;
+  bank_account_title?: string;
+  bank_iban?: string;
+  certifications: string[];
+
+  items: VendorApplicationItemInput[];
+  consent: boolean;
+  website_hp?: string; // honeypot — always leave blank
+}
+
+export const getVendorCategories = () =>
+  apiFetch<{ categories: string[] }>("/api/public/vendors/categories");
+
+export const getVendorTemplateUrl = () => `${API_BASE_URL}/api/public/vendors/template`;
+
+export interface ParsedCatalogueRow {
+  row_number: number;
+  name: string | null;
+  sku: string | null;
+  category: string | null;
+  description: string | null;
+  unit: string | null;
+  unit_price: number | null;
+  moq: number | null;
+  lead_time_days: number | null;
+}
+export interface ParsedCatalogueInvalidRow extends ParsedCatalogueRow {
+  errors: string[];
+}
+export interface ParseCatalogueResponse {
+  valid_rows: ParsedCatalogueRow[];
+  invalid_rows: ParsedCatalogueInvalidRow[];
+  row_count: number;
+  truncated: boolean;
+}
+
+export const parseVendorCatalogueFile = async (file: File): Promise<ParseCatalogueResponse> => {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API_BASE_URL}/api/public/vendors/items/parse`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `API error ${res.status}`);
+  }
+  return res.json();
+};
+
+export interface VendorDocumentUpload {
+  file: File;
+  doc_type: string;
+}
+
+export const applyVendor = async (
+  payload: VendorApplicationPayload,
+  documents: VendorDocumentUpload[]
+): Promise<{ application_id: string; reference_code: string; message: string }> => {
+  const form = new FormData();
+  form.append("payload", JSON.stringify(payload));
+  form.append("document_types", JSON.stringify(documents.map((d) => d.doc_type)));
+  documents.forEach((d) => form.append("documents", d.file, d.file.name));
+
+  const res = await fetch(`${API_BASE_URL}/api/public/vendors/apply`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || `API error ${res.status}`);
+  }
+  return res.json();
+};
+
+export interface VendorApplicationSummary {
+  id: string;
+  reference_code: string;
+  legal_company_name: string;
+  trade_name?: string | null;
+  business_type: string;
+  order_email: string;
+  email_verified: boolean;
+  city: string;
+  province: string;
+  status: "pending" | "approved" | "rejected" | "needs_info";
+  submitted_at: string;
+  reviewed_at: string | null;
+}
+
+export const listVendorApplications = (params?: {
+  status?: string;
+  search?: string;
+  limit?: number;
+  offset?: number;
+}) => {
+  const q = new URLSearchParams();
+  if (params?.status) q.set("status", params.status);
+  if (params?.search) q.set("search", params.search);
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.offset) q.set("offset", String(params.offset));
+  return apiFetch<{ applications: VendorApplicationSummary[]; counts: Record<string, number> }>(
+    `/api/vendor-applications?${q.toString()}`
+  );
+};
+
+export interface VendorApplicationDocument {
+  id: string;
+  doc_type: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+}
+
+export interface VendorApplicationItem {
+  id: string;
+  name: string;
+  sku: string | null;
+  category: string | null;
+  description: string | null;
+  unit: string;
+  unit_price: number;
+  moq: number | null;
+  lead_time_days: number | null;
+  row_source: string;
+}
+
+export interface VendorApplicationDetail extends VendorApplicationSummary {
+  ntn: string;
+  strn: string | null;
+  secp_number: string | null;
+  year_established: number | null;
+  employee_range: string | null;
+  website: string | null;
+  categories: string[];
+  contact_name: string;
+  contact_designation: string | null;
+  mobile: string;
+  alternate_phone: string | null;
+  address: string;
+  postal_code: string | null;
+  coverage_provinces: string[];
+  coverage_cities: string[];
+  lead_time_days: number | null;
+  payment_terms: string | null;
+  min_order_value: number | null;
+  warranty: string | null;
+  bank_name: string | null;
+  bank_account_title: string | null;
+  bank_iban: string | null;
+  certifications: string[];
+  rejection_reason: string | null;
+  admin_notes: string | null;
+  vetting_checklist: Record<string, boolean>;
+  approved_vendor_id: string | null;
+  items: VendorApplicationItem[];
+  documents: VendorApplicationDocument[];
+}
+
+export const getVendorApplication = (id: string) =>
+  apiFetch<VendorApplicationDetail>(`/api/vendor-applications/${id}`);
+
+export const getVendorApplicationDocumentUrl = (applicationId: string, documentId: string) =>
+  `${API_BASE_URL}/api/vendor-applications/${applicationId}/documents/${documentId}`;
+
+export const updateVendorApplicationChecklist = (id: string, checklist: Record<string, boolean>) =>
+  apiFetch<{ message: string }>(`/api/vendor-applications/${id}/checklist`, {
+    method: "POST",
+    body: JSON.stringify({ checklist }),
+  });
+
+export const approveVendorApplication = (id: string) =>
+  apiFetch<{ message: string; vendor_id: string }>(`/api/vendor-applications/${id}/approve`, {
+    method: "POST",
+  });
+
+export const rejectVendorApplication = (id: string, reason: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-applications/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+
+export const requestVendorApplicationInfo = (id: string, note: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-applications/${id}/request-info`, {
+    method: "POST",
+    body: JSON.stringify({ note }),
+  });
+
+export interface Vendor {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  order_email: string;
+  status: "active" | "suspended";
+  trade_name: string | null;
+  business_type: string | null;
+  city: string | null;
+  province: string | null;
+  categories: string[];
+  lead_time_days: number | null;
+  payment_terms: string | null;
+  min_order_value: number | null;
+  warranty: string | null;
+  certifications: string[];
+  item_count: number;
+}
+
+export interface VendorItem {
+  id: string;
+  vendor_id: string;
+  name: string;
+  sku: string | null;
+  category: string | null;
+  description: string | null;
+  unit: string;
+  unit_price: number;
+  moq: number | null;
+  lead_time_days: number | null;
+  is_active: boolean;
+}
+
+export const listVendors = (params?: { search?: string; category?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.search) q.set("search", params.search);
+  if (params?.category) q.set("category", params.category);
+  return apiFetch<{ vendors: Vendor[] }>(`/api/vendors?${q.toString()}`);
+};
+
+export const getVendor = (id: string) => apiFetch<Vendor>(`/api/vendors/${id}`);
+
+export const getVendorItems = (id: string) =>
+  apiFetch<{ items: VendorItem[] }>(`/api/vendors/${id}/items`);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VENDOR ORDERS — order -> vendor accept (n8n) -> smart contract -> shipment
+// -> orderer approval/dispute -> execution (Phase 2). "Receiver" = the
+// orderer who placed the order; there is no separate receiver.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface VendorOrderItemInput {
+  vendor_item_id: string;
+  quantity: number;
+}
+
+export interface PlaceVendorOrderPayload {
+  vendor_id: string;
+  items: VendorOrderItemInput[];
+  destination_name: string;
+  destination_city?: string;
+  destination_address?: string;
+  requested_delivery_date?: string;
+}
+
+export const placeVendorOrder = (payload: PlaceVendorOrderPayload) =>
+  apiFetch<{ order_id: string; order_code: string; status: string; vendor_email_status: string; message: string }>(
+    "/api/vendor-orders",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+
+export const resendVendorOrderRequest = (orderId: string) =>
+  apiFetch<{ message: string; vendor_email_status: string }>(`/api/vendor-orders/${orderId}/resend-vendor-request`, { method: "POST" });
+
+export const cancelVendorOrder = (orderId: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-orders/${orderId}/cancel`, { method: "POST" });
+
+// --- Public, no-login vendor pages ------------------------------------------
+
+export interface PublicVendorOrderItem {
+  name: string;
+  unit: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface PublicVendorOrderSummary {
+  order_code: string;
+  vendor_name: string;
+  destination_name: string;
+  destination_city: string | null;
+  requested_delivery_date: string | null;
+  status: string;
+  subtotal: number;
+  total_amount: number;
+  currency: string;
+  expires_at: string;
+  already_responded: boolean;
+  items: PublicVendorOrderItem[];
+}
+
+export const getPublicVendorOrder = (orderId: string, token: string) =>
+  apiFetch<PublicVendorOrderSummary>(`/api/public/vendor-orders/${orderId}?token=${encodeURIComponent(token)}`);
+
+export const respondVendorOrder = (orderId: string, token: string, decision: "accept" | "reject", reason?: string) =>
+  apiFetch<{ message: string }>("/api/public/vendor-orders/respond", {
+    method: "POST",
+    body: JSON.stringify({ order_id: orderId, token, decision, reason }),
+  });
+
+export interface PublicShipment {
+  status: string;
+  carrier: string | null;
+  tracking_no: string | null;
+  dispatch_date: string | null;
+  eta: string | null;
+}
+
+export const getPublicShipment = (orderId: string, token: string) =>
+  apiFetch<{ order_code: string; vendor_name: string; contract_status: string; shipment: PublicShipment | null }>(
+    `/api/public/vendor-orders/${orderId}/shipment?token=${encodeURIComponent(token)}`
+  );
+
+export interface ShipmentUpdateInput {
+  order_id: string;
+  token: string;
+  action: "dispatch" | "checkpoint";
+  carrier?: string;
+  tracking_no?: string;
+  eta?: string;
+  dispatch_date?: string;
+  status?: "InTransit" | "OutForDelivery";
+  location?: string;
+  note?: string;
+}
+
+export const submitVendorShipmentUpdate = (payload: ShipmentUpdateInput) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>("/api/public/vendor-orders/shipment-update", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+// --- Staff: checkpoints, chain status ---------------------------------------
+
+export interface StaffShipmentUpdateInput {
+  action: "dispatch" | "checkpoint";
+  carrier?: string;
+  tracking_no?: string;
+  eta?: string;
+  dispatch_date?: string;
+  status?: "InTransit" | "OutForDelivery";
+  location?: string;
+  note?: string;
+}
+
+export const staffShipmentCheckpoint = (orderId: string, payload: StaffShipmentUpdateInput) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>(`/api/shipments/${orderId}/checkpoints`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export interface ChainStatus {
+  rpc_configured: boolean;
+  configured: boolean;
+  connected: boolean;
+  network: string;
+  contract_address: string | null;
+}
+
+export const getChainStatus = () => apiFetch<ChainStatus>("/api/chain/status");
+
+// --- Orderer-only: confirm arrival, approve receipt, dispute ----------------
+
+export const confirmArrival = (orderId: string) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>(`/api/shipments/${orderId}/confirm-arrival`, { method: "POST" });
+
+export const approveReceipt = (orderId: string) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>(`/api/shipments/${orderId}/approve-receipt`, { method: "POST" });
+
+export const raiseDispute = (orderId: string, reason: string) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>(`/api/shipments/${orderId}/dispute`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+
+export const resolveDispute = (orderId: string, resolution: "Arrived" | "Cancelled" | "Executed", notes?: string) =>
+  apiFetch<{ message: string; chain: Record<string, unknown> }>(`/api/shipments/${orderId}/resolve-dispute`, {
+    method: "POST",
+    body: JSON.stringify({ resolution, notes }),
+  });
+
+// --- Order Tracking ----------------------------------------------------------
+
+export interface TrackingOrderRow {
+  id: string;
+  order_code: string;
+  vendor_id: string;
+  vendor_name: string;
+  orderer_user_id: string;
+  destination_name: string;
+  destination_city: string | null;
+  status: "PENDING_VENDOR" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED";
+  contract_status: string;
+  payment_status: string;
+  subtotal: number;
+  total_amount: number;
+  currency: string;
+  expires_at: string;
+  requested_delivery_date: string | null;
+  shipment_status: string | null;
+  carrier: string | null;
+  tracking_no: string | null;
+  eta: string | null;
+  action_needed: "confirm_arrival" | "approve_or_dispute" | null;
+  delayed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const listTracking = (params?: { scope?: "mine" | "all"; status?: string; vendor_id?: string; search?: string; limit?: number; offset?: number }) => {
+  const q = new URLSearchParams();
+  if (params?.scope) q.set("scope", params.scope);
+  if (params?.status) q.set("status", params.status);
+  if (params?.vendor_id) q.set("vendor_id", params.vendor_id);
+  if (params?.search) q.set("search", params.search);
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.offset) q.set("offset", String(params.offset));
+  return apiFetch<{ orders: TrackingOrderRow[] }>(`/api/tracking?${q.toString()}`);
+};
+
+export interface TrackingSummary {
+  awaiting_vendor: number;
+  in_progress: number;
+  action_needed: number;
+  delayed: number;
+  completed: number;
+  rejected_expired_disputed: number;
+}
+
+export const getTrackingSummary = (scope: "mine" | "all" = "mine") =>
+  apiFetch<TrackingSummary>(`/api/tracking/summary?scope=${scope}`);
+
+export interface ShipmentEvent {
+  id: string;
+  order_id: string;
+  status: string;
+  location: string | null;
+  note: string | null;
+  actor_type: "vendor_link" | "staff" | "receiver" | "system";
+  actor_user_id: string | null;
+  actor_label: string | null;
+  tx_hash: string | null;
+  block_number: number | null;
+  chain_confirmed_at: string | null;
+  created_at: string;
+}
+
+export interface TrackingOrderItem {
+  id: string;
+  name: string;
+  sku: string | null;
+  unit: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+}
+
+export interface TrackingDetail {
+  order: TrackingOrderRow & {
+    vendor_email: string;
+    orderer_name: string;
+    orderer_email: string;
+    chain_order_id: string | null;
+    chain_network: string | null;
+    dispute_reason: string | null;
+    dispute_resolution: string | null;
+    is_orderer: boolean;
+  };
+  items: TrackingOrderItem[];
+  shipment: PublicShipment | null;
+  events: ShipmentEvent[];
+  chain_live_state: Record<string, unknown> | null;
+}
+
+export const getTrackingDetail = (orderId: string) => apiFetch<TrackingDetail>(`/api/tracking/${orderId}`);
+
+export const downloadTrackingInvoicePdf = async (orderId: string, filenameHint?: string) => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
+  const res = await fetch(`${API_BASE_URL}/api/tracking/${orderId}/invoice/pdf`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to generate invoice PDF (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameHint ? `${filenameHint}.pdf` : `invoice-${orderId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};
