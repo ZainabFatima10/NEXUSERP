@@ -14,6 +14,7 @@ running `nexus_n8n` container's own database.
 | `vendor-order-email.workflow.json` | `/webhook/vendor-order-email` | `vendor_orders.place_vendor_order()` / resend / reminder | Itemized order + Accept/Reject buttons |
 | `vendor-order-shipment-link.workflow.json` | `/webhook/vendor-order-shipment-link` | `vendor_orders` on vendor **accept** | The no-login shipment-update link |
 | `vendor-order-payment-released.workflow.json` | `/webhook/vendor-order-payment-released` | `vendor_orders.approve_receipt_endpoint()` | Payment-released confirmation |
+| `vendor-order-status-checkin.workflow.json` | `/webhook/vendor-order-status-checkin` | `vendor_orders.check_vendor_status_checkins()` (scheduler, ~3x/day while in flight) | "What's the status?" nudge + shipment-update link |
 
 Every workflow is just two nodes: a `Webhook` node secured with a
 **Header Auth** credential (`X-Webhook-Secret`), and a `Send Email`
@@ -45,7 +46,7 @@ docker exec nexus_n8n n8n import:workflow --input=/tmp/wf2.json
 docker exec nexus_n8n n8n update:workflow --id=vendor-contract-confirmation-wf --active=true
 
 # Phase 2 — same pattern, same two credentials
-for wf in vendor-order-email vendor-order-shipment-link vendor-order-payment-released; do
+for wf in vendor-order-email vendor-order-shipment-link vendor-order-payment-released vendor-order-status-checkin; do
   docker cp "$wf.workflow.json" nexus_n8n:/tmp/$wf.json
   docker exec nexus_n8n n8n import:workflow --input=/tmp/$wf.json
   docker exec nexus_n8n n8n update:workflow --id="$wf-wf" --active=true

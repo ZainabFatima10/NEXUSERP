@@ -208,6 +208,32 @@ APScheduler, every 2 minutes) retries it, updating the *same* row in place
 (never creating a duplicate). A chain hiccup never blocks or fails a user
 action.
 
+## Vendor status check-ins — ~3x/day nudge while a shipment is in flight
+
+Once the vendor accepts, `vendor_orders.py` also schedules
+`vendor_orders.next_status_checkin_due` (`NOW() + VENDOR_STATUS_CHECKIN_INTERVAL_HOURS`,
+default 8h → ~3/day). A scheduler job (`check_vendor_status_checkins`, part
+of `_run_vendor_order_jobs`, every 5 min) emails the vendor
+(`vendor-order-status-checkin.workflow.json`) a fresh copy of their
+no-login shipment-update link (`/vendor/shipment`, the same page sent at
+acceptance) whenever an order is `ACCEPTED` and `contract_status` is still
+one of `Preparing`/`Dispatched`/`InTransit`/`OutForDelivery`
+(`IN_FLIGHT_CONTRACT_STATUSES`), and bumps `next_status_checkin_due`
+another interval out. Each check-in also drops a low-priority
+`shipment.status_checkin_sent` in-app notification for the orderer (no
+`dedupe_key` — unlike most reminder events here, this one is meant to
+recur, see `CLAUDE.md`'s gotcha #7).
+
+Whatever the vendor submits through that link (`_do_shipment_update`) goes
+through the exact same path a spontaneous update would — it resets
+`next_status_checkin_due` another interval out (no point nagging again
+five minutes later) and fires the normal `shipment.dispatched` /
+`shipment.in_transit` / `shipment.out_for_delivery` notification to the
+orderer, which both Order Tracking pages already live-refresh on via SSE.
+The check-ins stop the moment arrival is confirmed
+(`confirm_arrival_endpoint` clears `next_status_checkin_due` outright; the
+job's own `contract_status` filter is the second line of defense).
+
 ## Payment lifecycle — mocked in Phase 2, real Stripe in Phase 4
 
 Per the agreed Phase 2 scope, `payment_mock_service.py` simulates

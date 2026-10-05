@@ -93,7 +93,7 @@ migration must be idempotent and safe to re-run. Patterns already in use:
 (`sql.split(";")`) — **never put a literal `;` inside a SQL comment**, it
 will be treated as a statement boundary and crash the next startup.
 
-Next new migration should be `012_*.sql`.
+Next new migration should be `013_*.sql`.
 
 ## Known gotchas (found via live-testing against a real Postgres instance — worth re-checking if you touch nearby code)
 

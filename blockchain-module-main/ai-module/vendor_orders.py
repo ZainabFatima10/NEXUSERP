@@ -33,6 +33,7 @@ from n8n_service import (
     trigger_vendor_order_email,
     trigger_vendor_order_shipment_link_email,
     trigger_vendor_order_payment_released_email,
+    trigger_vendor_order_status_checkin_email,
 )
 import shipment_chain_service as chain
 import payment_mock_service as payments
@@ -47,6 +48,10 @@ VENDOR_ORDER_RESPONSE_HOURS = int(os.getenv("VENDOR_ORDER_RESPONSE_HOURS", "72")
 VENDOR_REMINDER_HOURS_BEFORE_EXPIRY = int(os.getenv("VENDOR_REMINDER_HOURS_BEFORE_EXPIRY", "24"))
 ARRIVAL_REMINDER_HOURS_AFTER_ETA = int(os.getenv("ARRIVAL_REMINDER_HOURS_AFTER_ETA", "24"))
 APPROVAL_REMINDER_HOURS_AFTER_ARRIVAL = int(os.getenv("APPROVAL_REMINDER_HOURS_AFTER_ARRIVAL", "48"))
+# 3x/day while a shipment is in flight (Preparing..OutForDelivery) — stops
+# the moment it leaves those states (Arrived/Executed/Cancelled/Disputed).
+VENDOR_STATUS_CHECKIN_INTERVAL_HOURS = int(os.getenv("VENDOR_STATUS_CHECKIN_INTERVAL_HOURS", "8"))
+IN_FLIGHT_CONTRACT_STATUSES = ("Preparing", "Dispatched", "InTransit", "OutForDelivery")
 
 SHIPPABLE_CONTRACT_STATUSES = ("Preparing", "Dispatched", "InTransit", "OutForDelivery")
 
@@ -445,6 +450,7 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
               destination_hash = :dest_hash, order_hash = :order_hash,
               contract_status = 'Preparing',
               payment_status = :payment_status, payment_ref = :payment_ref,
+              next_status_checkin_due = NOW() + (:checkin_hours * INTERVAL '1 hour'),
               updated_at = NOW()
             WHERE id = :id
         """),
@@ -452,6 +458,7 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
             "chain_order_id": chain_result.get("chain_order_id"), "network": chain.CHAIN_NETWORK,
             "dest_hash": chain_result.get("destination_hash"), "order_hash": chain_result.get("order_hash"),
             "payment_status": payment_result["status"], "payment_ref": payment_result["payment_ref"],
+            "checkin_hours": VENDOR_STATUS_CHECKIN_INTERVAL_HOURS,
             "id": req.order_id,
         },
     )
@@ -572,7 +579,18 @@ def _do_shipment_update(db: Session, order_id: str, req: VendorShipmentUpdateReq
         raise HTTPException(400, "action must be 'dispatch' or 'checkpoint'")
 
     chain_result = chain.record_checkpoint(db, order_id, order["order_code"], new_status, req.location, note, actor_type)
-    db.execute(text("UPDATE vendor_orders SET contract_status=:s, updated_at=NOW() WHERE id=:id"), {"s": new_status, "id": order_id})
+    # A real status update (from the vendor or staff) is itself the thing
+    # the check-in nudges are chasing — push the next one out a full
+    # interval rather than nagging again a few minutes later.
+    db.execute(
+        text("""
+            UPDATE vendor_orders SET contract_status=:s,
+              next_status_checkin_due = NOW() + (:checkin_hours * INTERVAL '1 hour'),
+              updated_at=NOW()
+            WHERE id=:id
+        """),
+        {"s": new_status, "checkin_hours": VENDOR_STATUS_CHECKIN_INTERVAL_HOURS, "id": order_id},
+    )
     _insert_event(db, order_id, new_status, actor_type, location=req.location, note=note,
                   actor_user_id=actor_user_id, actor_label=actor_label, chain_result=chain_result)
     db.commit()
@@ -649,7 +667,10 @@ def confirm_arrival_endpoint(order_id: str, user: dict = Depends(get_current_use
 
     destination = _destination_string(order)
     chain_result = chain.confirm_arrival(db, order_id, order["order_code"], destination, user["id"])
-    db.execute(text("UPDATE vendor_orders SET contract_status='Arrived', updated_at=NOW() WHERE id=:id"), {"id": order_id})
+    db.execute(
+        text("UPDATE vendor_orders SET contract_status='Arrived', next_status_checkin_due=NULL, updated_at=NOW() WHERE id=:id"),
+        {"id": order_id},
+    )
     _insert_event(db, order_id, "Arrived", "receiver", actor_user_id=user["id"], actor_label=user["name"], chain_result=chain_result)
 
     # Confirming arrival is itself the action that closes out the
@@ -1130,6 +1151,68 @@ def check_delayed_shipments(db: Session) -> int:
             metadata={"order_id": str(order["id"])},
         )
         db.execute(text("UPDATE vendor_orders SET delay_notified_at=NOW() WHERE id=:id"), {"id": order["id"]})
+        db.commit()
+    return len(rows)
+
+
+def check_vendor_status_checkins(db: Session) -> int:
+    """3x/day (every VENDOR_STATUS_CHECKIN_INTERVAL_HOURS, default 8h)
+    while a shipment is in flight: email the vendor their existing
+    reusable shipment-update link again as a "what's the status?" nudge.
+    Stops the moment contract_status leaves IN_FLIGHT_CONTRACT_STATUSES —
+    confirm_arrival_endpoint clears next_status_checkin_due outright, and
+    this WHERE clause is the second line of defense. Each nudge also drops
+    a low-priority in-app notification for the orderer so "3 check-ins
+    went out today" is visible on the order without digging into email."""
+    rows = db.execute(
+        text("""
+            SELECT o.*, v.name AS vendor_name, v.order_email AS vendor_email
+            FROM vendor_orders o JOIN vendors v ON v.id = o.vendor_id
+            WHERE o.status = 'ACCEPTED'
+              AND o.contract_status = ANY(:in_flight)
+              AND o.next_status_checkin_due IS NOT NULL
+              AND o.next_status_checkin_due <= NOW()
+        """),
+        {"in_flight": list(IN_FLIGHT_CONTRACT_STATUSES)},
+    ).mappings().all()
+    for row in rows:
+        order = dict(row)
+        # Tokens are stored hashed (see _hash_token) — the raw token from
+        # acceptance isn't recoverable here, so mint a fresh 'ship_update'
+        # token for this nudge rather than trying to reuse the original.
+        # The original keeps working too (multiple live tokens per order
+        # are fine, same as 'respond' tokens during a resend).
+        new_token = secrets.token_urlsafe(32)
+        db.execute(
+            text("""
+                INSERT INTO vendor_order_tokens (id, order_id, purpose, token_hash, expires_at)
+                VALUES (:id, :oid, 'ship_update', :hash, :expires_at)
+            """),
+            {"id": str(uuid.uuid4()), "oid": order["id"], "hash": _hash_token(new_token),
+             "expires_at": datetime.now(timezone.utc) + timedelta(days=30)},
+        )
+        ship_url = f"{FRONTEND_URL}/vendor/shipment?order_id={order['id']}&token={new_token}"
+        items = _get_items(db, order["id"])
+        trigger_vendor_order_status_checkin_email(order, items, ship_url)
+
+        db.execute(
+            text("""
+                UPDATE vendor_orders SET
+                  status_checkin_count = status_checkin_count + 1,
+                  last_status_checkin_at = NOW(),
+                  next_status_checkin_due = NOW() + (:checkin_hours * INTERVAL '1 hour')
+                WHERE id = :id
+            """),
+            {"checkin_hours": VENDOR_STATUS_CHECKIN_INTERVAL_HOURS, "id": order["id"]},
+        )
+        notify(
+            db, "shipment.status_checkin_sent", {"orderer_user_id": order["orderer_user_id"]},
+            title=f"Status Check-in Sent — {order['order_code']}",
+            body=f"Asked {order['vendor_name']} for a delivery status update on {order['order_code']} "
+                 f"(currently {order['contract_status']}).",
+            entity_type="vendor_order", entity_id=str(order["id"]), action_path=f"/tracking/{order['id']}",
+            metadata={"order_id": str(order["id"])},
+        )
         db.commit()
     return len(rows)
 

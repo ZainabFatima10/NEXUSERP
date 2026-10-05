@@ -1,0 +1,61 @@
+{
+  "id": "vendor-order-status-checkin-wf",
+  "name": "NEXUS ERP — Vendor Status Check-in (Phase 2)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vendor-order-status-checkin",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-vendor-order-status-checkin",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "vendor-order-status-checkin-hook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "2",
+          "name": "Nexus Webhook Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{$env.SMTP_USER}}",
+        "toEmail": "={{$json.body.vendor_email}}",
+        "subject": "=Quick check-in — what's the status of order {{$json.body.order_code}}?",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family:'DM Sans',Arial,sans-serif;background:#f4f7fb;padding:32px 16px;\"><div style=\"max-width:560px;margin:0 auto;background:#fff;border-radius:16px;padding:40px;box-shadow:0 8px 32px rgba(0,0,0,0.08);\"><h1 style=\"color:#001F54;font-size:22px;margin:0 0 4px;\">NEXUS ERP</h1><p style=\"color:#888;font-size:13px;margin:0 0 24px;\">PowerGrid Optimizer — Delivery Status Check-in</p><p style=\"color:#333;line-height:1.6;\">Dear {{$json.body.vendor_name}},</p><p style=\"color:#333;line-height:1.6;\">Just checking in on order <strong>{{$json.body.order_code}}</strong> — it's currently marked <strong>{{$json.body.contract_status}}</strong> in our system. If that's changed, let us know in one click, no login needed.</p><div style=\"text-align:center;margin:28px 0 12px;\"><a href=\"{{$json.body.shipment_update_url}}\" style=\"display:inline-block;background:#001F54;color:#fff;text-decoration:none;font-weight:700;padding:14px 36px;border-radius:24px;\">📦 Update Delivery Status</a></div><p style=\"color:#aaa;font-size:11px;margin-top:32px;\">We'll keep checking in a few times a day until this order is marked delivered — once it's out for delivery or arrived, these stop automatically.</p></div></div>",
+        "options": {}
+      },
+      "id": "email-vendor-order-status-checkin",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [520, 300],
+      "credentials": {
+        "smtp": {
+          "id": "1",
+          "name": "Nexus SMTP"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          { "node": "Send Email", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

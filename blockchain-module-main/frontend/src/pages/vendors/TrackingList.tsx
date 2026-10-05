@@ -10,7 +10,8 @@ import {
   Loader2, Search, Clock, TruckIcon, AlertTriangle, CheckCircle2, XCircle,
   ChevronRight,
 } from "lucide-react";
-import { listTracking, getTrackingSummary, TrackingOrderRow, TrackingSummary } from "@/services/api";
+import { listTracking, getTrackingSummary, subscribeToNotifications, TrackingOrderRow, TrackingSummary } from "@/services/api";
+import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
 const SUMMARY_CARDS: { key: keyof TrackingSummary; label: string; icon: typeof Clock; color: string }[] = [
@@ -48,19 +49,25 @@ const MiniProgress = ({ order }: { order: TrackingOrderRow }) => {
 
 const TrackingList = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const base = location.pathname.startsWith("/admin") ? "/admin/tracking" : "/procurement/tracking";
 
-  const [scope, setScope] = useState<"mine" | "all">("mine");
+  // Staff with org-wide oversight (admin / procurement manager) land on
+  // "All Orders" by default — defaulting to "My Orders" made this page look
+  // broken/empty for them whenever the order they came to check was placed
+  // by a different staff member.
+  const isOversightRole = user?.role === "admin" || user?.role === "procurement_manager";
+  const [scope, setScope] = useState<"mine" | "all">(isOversightRole ? "all" : "mine");
   const [filter, setFilter] = useState<keyof TrackingSummary | null>(null);
   const [search, setSearch] = useState("");
   const [orders, setOrders] = useState<TrackingOrderRow[]>([]);
   const [summary, setSummary] = useState<TrackingSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [ordersRes, summaryRes] = await Promise.all([
         listTracking({ scope, search: search || undefined, limit: 100 }),
@@ -69,13 +76,24 @@ const TrackingList = () => {
       setOrders(ordersRes.orders);
       setSummary(summaryRes);
     } catch {
-      toast({ title: "Failed to load order tracking", variant: "destructive" });
+      if (!silent) toast({ title: "Failed to load order tracking", variant: "destructive" });
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [scope, search, toast]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live updates: any vendor_order event (placed, accepted, shipment
+  // checkpoint, approved, disputed...) refreshes the list/summary in the
+  // background — no manual refresh needed to see a vendor's email reply
+  // reflected here.
+  useEffect(() => {
+    const unsubscribe = subscribeToNotifications((n) => {
+      if (n.entity_type === "vendor_order") load(true);
+    });
+    return unsubscribe;
+  }, [load]);
 
   const filtered = orders.filter((o) => {
     if (!filter) return true;
@@ -133,7 +151,19 @@ const TrackingList = () => {
       {loading ? (
         <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-primary" size={36} /></div>
       ) : filtered.length === 0 ? (
-        <div className="glass-card p-10 text-center text-muted-foreground text-sm">No orders match this filter.</div>
+        <div className="glass-card p-10 text-center text-muted-foreground text-sm space-y-3">
+          <p>{orders.length === 0 && scope === "mine" ? "You haven't placed any orders yet." : "No orders match this filter."}</p>
+          {orders.length === 0 && scope === "mine" && (
+            <button onClick={() => setScope("all")} className="text-sm font-medium text-primary hover:underline">
+              Show all orders instead →
+            </button>
+          )}
+          {orders.length > 0 && filter && (
+            <button onClick={() => setFilter(null)} className="text-sm font-medium text-primary hover:underline">
+              Clear filter
+            </button>
+          )}
+        </div>
       ) : (
         <div className="space-y-2">
           {filtered.map((o) => (

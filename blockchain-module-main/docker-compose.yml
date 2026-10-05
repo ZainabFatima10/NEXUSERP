@@ -11,5 +11,17 @@
     volumes:
       - nexus_data:/var/lib/postgresql/data
 
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: nexus_n8n
+    environment:
+      N8N_SECURE_COOKIE: 'false'
+      WEBHOOK_URL: 'http://localhost:5678/'
+    ports:
+      - '5678:5678'
+    volumes:
+      - nexus_n8n_data:/home/node/.n8n
+
 volumes:
   nexus_data:
+  nexus_n8n_data:

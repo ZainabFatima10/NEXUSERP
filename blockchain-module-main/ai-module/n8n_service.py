@@ -29,6 +29,7 @@ N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 N8N_VENDOR_ORDER_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_WEBHOOK_URL", "")
 N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL", "")
 N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL", "")
+N8N_VENDOR_ORDER_STATUS_CHECKIN_WEBHOOK_URL = os.getenv("N8N_VENDOR_ORDER_STATUS_CHECKIN_WEBHOOK_URL", "")
 
 
 def _post_webhook(url: str, payload: dict, *, dev_message: str) -> dict:
@@ -198,6 +199,32 @@ def trigger_vendor_order_shipment_link_email(
         f"  Shipment update link: {shipment_update_url}\n"
     )
     return _post_webhook(N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL, payload, dev_message=dev_message)
+
+
+def trigger_vendor_order_status_checkin_email(
+    order: dict,
+    items: list,
+    shipment_update_url: str,
+) -> dict:
+    """Sent ~3x/day while a shipment is in flight (vendor_orders.py's
+    check_vendor_status_checkins) — a friendly "what's the status?" nudge
+    with a fresh copy of the no-login shipment-update link, reusing the
+    same page as the one sent at acceptance."""
+    payload = jsonable_encoder({
+        "order_id":    order["id"],
+        "order_code":  order["order_code"],
+        "vendor_name": order["vendor_name"],
+        "vendor_email": order["vendor_email"],
+        "contract_status": order["contract_status"],
+        "items": items,
+        "shipment_update_url": shipment_update_url,
+    })
+    dev_message = (
+        f"\n[DEV MODE — n8n not configured] Would POST status check-in email for "
+        f"{order['order_code']} to {order['vendor_email']} (currently {order['contract_status']})\n"
+        f"  Shipment update link: {shipment_update_url}\n"
+    )
+    return _post_webhook(N8N_VENDOR_ORDER_STATUS_CHECKIN_WEBHOOK_URL, payload, dev_message=dev_message)
 
 
 def trigger_vendor_order_payment_released_email(order: dict) -> dict:

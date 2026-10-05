@@ -23,7 +23,7 @@ const StatusBadge = ({ status }: { status: string }) => {
     Unverified: "bg-destructive/10 text-destructive",
   };
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${colors[status] || "bg-muted text-muted-foreground"}`}>
+    <span className={`inline-flex items-center justify-center whitespace-nowrap text-xs px-2 py-0.5 rounded-full font-medium ${colors[status] || "bg-muted text-muted-foreground"}`}>
       {status}
     </span>
   );
@@ -36,7 +36,7 @@ const TriggerBadge = ({ type }: { type: string }) => {
     Manual: "bg-muted text-muted-foreground border border-border",
   };
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${styles[type] || "bg-muted text-muted-foreground"}`}>
+    <span className={`inline-flex items-center justify-center whitespace-nowrap text-xs px-2 py-0.5 rounded-full font-medium ${styles[type] || "bg-muted text-muted-foreground"}`}>
       {type}
     </span>
   );
@@ -359,13 +359,13 @@ const Procurement = () => {
                   </tr>
                 )}
                 {activeOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-muted/10 transition-colors">
-                    <td className="px-4 py-3 text-sm font-mono text-primary">{order.order_code}</td>
-                    <td className="px-4 py-3 text-sm font-medium">{order.item_name}</td>
-                    <td className="px-4 py-3 text-sm">{order.quantity.toLocaleString()} {order.unit}</td>
-                    <td className="px-4 py-3 text-sm">{order.vendor_name}</td>
-                    <td className="px-4 py-3"><TriggerBadge type={order.trigger_type} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={order.contract_status} /></td>
+                  <tr key={order.id} className="hover:bg-muted/10 transition-colors align-middle">
+                    <td className="px-4 py-3 text-sm font-mono text-primary whitespace-nowrap">{order.order_code}</td>
+                    <td className="px-4 py-3 text-sm font-medium whitespace-nowrap">{order.item_name}</td>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">{order.quantity.toLocaleString()} {order.unit}</td>
+                    <td className="px-4 py-3 text-sm whitespace-nowrap">{order.vendor_name}</td>
+                    <td className="px-4 py-3 whitespace-nowrap"><TriggerBadge type={order.trigger_type} /></td>
+                    <td className="px-4 py-3 whitespace-nowrap"><StatusBadge status={order.contract_status} /></td>
                     <td className="px-4 py-3 min-w-[200px]"><OrderStepper stage={order.stage} /></td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{order.expected_delivery}</td>
                     <td className="px-4 py-3 flex items-center gap-3">

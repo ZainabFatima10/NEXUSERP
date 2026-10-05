@@ -61,25 +61,54 @@ const EndStateBanner = ({ order }: { order: TrackingDetailType["order"] }) => {
 const ProgressBar = ({ order }: { order: TrackingDetailType["order"] }) => {
   const idx = currentStepIndex(order);
   if (idx < 0) return <EndStateBanner order={order} />;
+
+  const pct = PROGRESS_STEPS.length > 1 ? (idx / (PROGRESS_STEPS.length - 1)) * 100 : 0;
+  const currentLabel = PROGRESS_STEPS[idx]?.label ?? "";
+
   return (
     <div>
-      <div className="flex items-center overflow-x-auto scroll-thin pb-2">
-        {PROGRESS_STEPS.map((s, i) => (
-          <div key={s.key} className="flex items-center flex-shrink-0">
-            <div className="flex flex-col items-center gap-1 w-24">
-              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold ${
-                i < idx ? "bg-success text-white" : i === idx ? "bg-primary text-white" : "bg-muted text-muted-foreground"
-              }`}>
-                {i < idx ? <CheckCircle2 size={14} /> : i + 1}
-              </div>
-              <span className={`text-[10px] text-center ${i === idx ? "text-foreground font-medium" : "text-muted-foreground"}`}>{s.label}</span>
-            </div>
-            {i < PROGRESS_STEPS.length - 1 && <div className={`h-px w-6 ${i < idx ? "bg-success" : "bg-border"}`} />}
-          </div>
-        ))}
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm font-semibold text-foreground">{currentLabel}</span>
+        <span className="text-xs text-muted-foreground">Step {idx + 1} of {PROGRESS_STEPS.length}</span>
       </div>
+
+      <div className="relative">
+        {/* Track + fill, laid out under the step dots so the line never
+            crosses through them and stays perfectly centered. */}
+        <div className="absolute top-4 left-0 right-0 h-1 rounded-full bg-muted/50" />
+        <div
+          className="absolute top-4 left-0 h-1 rounded-full bg-gradient-to-r from-success to-primary transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+
+        <div className="relative flex items-start justify-between gap-1 overflow-x-auto scroll-thin pb-1">
+          {PROGRESS_STEPS.map((s, i) => (
+            <div key={s.key} className="flex flex-col items-center gap-2 flex-1 min-w-[64px]">
+              <div
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ring-4 ring-background transition-colors ${
+                  i < idx
+                    ? "bg-success text-white"
+                    : i === idx
+                    ? "bg-primary text-white shadow-[0_0_0_4px_rgba(59,130,246,0.15)] animate-pulse"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {i < idx ? <CheckCircle2 size={15} /> : i + 1}
+              </div>
+              <span
+                className={`text-[10px] text-center leading-tight ${
+                  i === idx ? "text-foreground font-semibold" : i < idx ? "text-muted-foreground" : "text-muted-foreground/70"
+                }`}
+              >
+                {s.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {order.delayed && (
-        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-warning/10 text-warning mt-2">
+        <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full bg-warning/10 text-warning mt-3">
           <AlertTriangle size={12} /> Delayed — ETA has passed
         </span>
       )}

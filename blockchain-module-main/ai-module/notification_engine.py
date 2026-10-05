@@ -80,6 +80,7 @@ EVENT_META = {
     "shipment.arrival_reminder":             {"category": "Shipments", "severity": "warning", "requires_action": True, "action_label": "Confirm arrival", "recipients": ["$orderer"], "email": True},
     "shipment.arrived":                        {"category": "Shipments", "severity": "warning", "requires_action": True, "action_label": "Approve or dispute", "recipients": ["$orderer"], "email": True},
     "shipment.approval_reminder":                {"category": "Shipments", "severity": "warning", "requires_action": True, "action_label": "Approve or dispute", "recipients": ["$orderer"], "email": True},
+    "shipment.status_checkin_sent":                {"category": "Shipments", "severity": "info", "recipients": ["$orderer"]},
 
     "contract.executed":                           {"category": "Confirmations", "severity": "success", "recipients": ["$orderer", "admin", "procurement_manager"], "email": True},
     "dispute.opened":                                {"category": "Shipments", "severity": "warning", "recipients": ["admin"], "email": True},

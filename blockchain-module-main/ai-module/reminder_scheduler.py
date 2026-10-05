@@ -80,6 +80,7 @@ def _run_vendor_order_jobs():
         vendor_orders.check_arrival_reminders,
         vendor_orders.check_approval_reminders,
         vendor_orders.check_delayed_shipments,
+        vendor_orders.check_vendor_status_checkins,
         vendor_orders.check_chain_health,
     ):
         try:

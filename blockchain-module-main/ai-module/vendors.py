@@ -270,6 +270,30 @@ async def apply_vendor(
     if biz_errors:
         raise HTTPException(400, "; ".join(biz_errors))
 
+    # Same company (by NTN) already has a live application or is already an
+    # approved vendor — block the resubmission rather than letting it create
+    # a second, confusingly-named entry (same company name, different
+    # reference code) sitting in a different tab.
+    existing_application = db.execute(
+        text("""
+            SELECT reference_code, status FROM vendor_applications
+            WHERE ntn = :ntn AND status IN ('pending', 'needs_info', 'approved')
+            ORDER BY submitted_at DESC LIMIT 1
+        """),
+        {"ntn": app_payload.ntn},
+    ).mappings().first()
+    if existing_application:
+        raise HTTPException(
+            400,
+            f"An application for this NTN already exists ({existing_application['reference_code']}, "
+            f"status: {existing_application['status']}). Contact us if you need to update it.",
+        )
+    existing_vendor = db.execute(
+        text("SELECT id FROM vendors WHERE ntn = :ntn AND status = 'active'"), {"ntn": app_payload.ntn}
+    ).first()
+    if existing_vendor:
+        raise HTTPException(400, "This NTN is already registered as an approved vendor.")
+
     try:
         doc_types = json.loads(document_types)
     except json.JSONDecodeError:

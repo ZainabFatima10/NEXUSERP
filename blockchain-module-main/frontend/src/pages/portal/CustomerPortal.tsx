@@ -488,7 +488,7 @@ const CustomerPortal = () => {
     : "One moment…";
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen overflow-hidden bg-background flex flex-col">
       <header className="h-16 flex-shrink-0 flex items-center justify-between px-4 sm:px-6 border-b border-border">
         <div className="flex items-center gap-2">
           <LogoMark size={28} />
