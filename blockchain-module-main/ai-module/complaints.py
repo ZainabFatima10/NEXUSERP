@@ -116,6 +116,31 @@ def submit_chat_complaint(req: ChatComplaintRequest, user: dict = Depends(get_cu
     }
 
 
+class ComplaintPreviewRequest(BaseModel):
+    message: str
+
+
+@router.post("/preview", dependencies=[_customer])
+def preview_complaint(req: ComplaintPreviewRequest):
+    """
+    Read-only: classifies a draft complaint and suggests at most one
+    clarifying follow-up question if something important seems missing —
+    never creates a ticket, never writes to the DB. Lets the Customer
+    Portal's voice call ask one natural follow-up before filing. Same
+    guardrail as the rest of RAG/LLM use in this app: this only ever
+    suggests; /voice and /chat (above) remain the sole, deterministic
+    ticket-creation path, unchanged by this endpoint's existence.
+    classify_complaint() folds the follow-up decision into its one call —
+    see its docstring for why (Gemini's free-tier daily quota).
+    """
+    text_content = (req.message or "").strip()
+    if not text_content:
+        raise HTTPException(400, "Complaint text is empty")
+    classification = llm_service.classify_complaint(text_content)
+    followup_question = classification.pop("followup_question", None)
+    return {"classification": classification, "followup_question": followup_question}
+
+
 @router.get("/mine", dependencies=[_customer])
 def list_my_complaints(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     rows = db.execute(

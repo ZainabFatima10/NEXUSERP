@@ -114,7 +114,22 @@ def create_ticket(
                     "id": ticket_id, "code": ticket_code, "reference_id": reference_id,
                     "cust_id": customer_id, "cust_name": customer_name, "cust_email": customer_email,
                     "channel": channel, "category": classification["category"], "subtype": classification["subtype"],
-                    "severity": classification["severity"], "description": description, "area": area,
+                    "severity": classification["severity"],
+                    # Stored as the ticket's permanent description — prefer the
+                    # classifier's one-sentence summary over the raw customer
+                    # text, so a voice complaint that got a follow-up question
+                    # folded in (see llm_service.classify_complaint) reads as a
+                    # proper complaint record rather than a glued-together
+                    # transcript ("Hi, my electricity isn't working.. I live in
+                    # F-11."). Free: classify_complaint() already runs above for
+                    # every ticket, so this costs no extra LLM call. In dev-mode
+                    # / on any classify failure, summary IS the raw text (see
+                    # _keyword_classify), so this is a no-op there — only
+                    # changes behavior when the LLM actually ran. The verbatim
+                    # customer words are preserved unchanged in the
+                    # voice_transcript/chat_message event logged just below.
+                    "description": classification.get("summary") or description,
+                    "area": area,
                     "vema_triggered": vema_triggered,
                 },
             )

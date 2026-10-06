@@ -656,6 +656,18 @@ export const submitVoiceComplaint = (message: string, area?: string) =>
     reply_audio_base64: string | null; reply_audio_available: boolean;
   }>("/api/complaints/voice", { method: "POST", body: JSON.stringify({ message, area }) });
 
+/**
+ * Read-only preview: classifies a draft complaint and suggests at most one
+ * clarifying follow-up question (e.g. "which area?") if something important
+ * seems missing — never creates a ticket. Used by the voice call to ask a
+ * natural follow-up before filing.
+ */
+export const previewComplaint = (message: string) =>
+  apiFetch<{
+    classification: { category: string; subtype: string; severity: string; summary: string };
+    followup_question: string | null;
+  }>("/api/complaints/preview", { method: "POST", body: JSON.stringify({ message }) });
+
 /** Withdraw one of your own complaints (only while status is open/auto_resolved). */
 export const deleteComplaint = (id: string) =>
   apiFetch<{ message: string }>(`/api/complaints/${id}`, { method: "DELETE" });

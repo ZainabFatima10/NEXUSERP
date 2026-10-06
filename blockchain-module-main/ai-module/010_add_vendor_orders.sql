@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS user_wallets (
 -- CHAIN TX QUEUE — every on-chain call is written here BEFORE being
 -- attempted (so a crash mid-call loses nothing), then attempted
 -- immediately. On failure it stays 'pending' for the scheduler to retry
--- with backoff; the user-facing action it was part of already succeeded
+-- with backoff — the user-facing action it was part of already succeeded
 -- off-chain ("pending on-chain confirmation" in the UI) -- a chain hiccup
 -- never blocks the business action. On success it's marked 'confirmed'
 -- and the matching shipment_events row gets its tx_hash/block_number.

@@ -144,6 +144,34 @@ long testing session. Two things worth knowing if you hit this:
    project (still free-tier pricing, but unlocks the standard, much higher
    free-tier RPD) — outside the scope of a code change.
 
+### Every LLM-backed voice-call feature now has a real per-turn call budget
+
+Adding the one-shot clarifying follow-up question (`classify_complaint()`'s
+`followup_question` field, used by `/api/complaints/preview` and
+`CustomerPortal.tsx`'s voice call) is a second, concrete lesson from the
+20/day cap above: a single complaint turn in a live call can trigger
+several Gemini calls back to back — intent routing (`/api/rag/query`),
+classification, and the post-file conversational reply. The follow-up
+question was first built as its *own* separate `chat_json` call
+(classify, then a second call asking "what's missing") — correct, but it
+roughly doubled the quota cost of every complaint turn, and on a 20/day
+budget that meant the feature stopped firing (silently, correctly, via the
+existing fail-open path) after only a handful of turns, read by a live
+user as "it doesn't ask follow-up questions" with no error anywhere to
+explain why.
+
+Fixed by folding the follow-up decision into `classify_complaint()`'s
+*existing* call instead of a second one — the taxonomy's `required_fields`
+were already embedded in that prompt for classification, so asking the
+same call to also decide "is anything important missing, and if so what's
+the one question to ask" costs nothing extra. Confirmed via the backend
+log: before the merge, one preview request logged two consecutive
+`[WARN] Gemini call failed` lines; after, exactly one. **Lesson for any
+future addition to this voice flow**: before adding a new LLM call to a
+per-turn path, check whether it can be folded into an existing one in the
+same turn — the 20/day cap makes this a real design constraint here, not
+just a performance nicety.
+
 ### A hallucination a live LLM reply caught (and fixed)
 
 `generate_chat_reply()`'s prompt told Gemini to "let them know it's been

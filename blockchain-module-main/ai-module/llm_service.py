@@ -32,11 +32,22 @@ complaint's content clearly warrants a different one (e.g. a "bill not
 received" complaint that also mentions the customer has been disconnected
 should be escalated above its category default).
 
-Taxonomy (category -> subtypes -> default severity):
+Taxonomy (category -> subtypes -> default severity -> details normally needed
+to act on it, "required_fields"):
 {json.dumps(TAXONOMY, indent=2)}
 
+Also decide whether something important from the chosen category's
+required_fields is genuinely missing from what the customer said, AND the
+customer could reasonably be expected to know it right now (e.g. no
+area/location for an outage, no meter number for a meter fault). If so,
+include ONE short, natural, spoken-friendly follow-up question for the
+single most important missing detail. If the complaint already covers
+enough to act on, follow-up_question must be null — never ask just because
+a field exists in the list.
+
 Respond with ONLY a JSON object: {{"category": "...", "subtype": "...",
-"severity": "small|medium|critical", "summary": "one sentence summary"}}"""
+"severity": "small|medium|critical", "summary": "one sentence summary",
+"followup_question": "..." or null}}"""
 
 
 # Words too generic to distinguish between subtypes on their own (they show
@@ -93,24 +104,45 @@ def _keyword_classify(text: str) -> dict:
 
 
 def classify_complaint(text: str) -> dict:
-    """Returns {category, subtype, severity, summary}."""
+    """
+    Returns {category, subtype, severity, summary, followup_question}.
+    followup_question (see taxonomy.required_fields_for) is folded into this
+    same call rather than a second LLM round-trip — Gemini's free tier caps
+    at 20 requests/day per model (confirmed live, see VEMA_RAG.md), so a
+    separate call here would roughly double the quota this one conversation
+    turn costs for zero benefit, since every fact the model needs to decide
+    on a follow-up (the taxonomy's required_fields) is already in this
+    prompt. followup_question is suggest-only — never changes classification
+    or ticket content, and any failure (no provider, rate limit, bad JSON)
+    just means no question gets asked, same fail-open behavior as every
+    other LLM call here.
+    """
     if not LLM_AVAILABLE:
-        return _keyword_classify(text)
+        result = _keyword_classify(text)
+        result["followup_question"] = None  # deciding what's *missing* needs real language
+        return result                        # understanding, not a keyword match — dev-mode skips it
 
     parsed = chat_json(_CLASSIFY_SYSTEM_PROMPT, text, temperature=0.1)
     if parsed is None:
-        return _keyword_classify(text)
+        result = _keyword_classify(text)
+        result["followup_question"] = None
+        return result
 
     category = parsed.get("category")
     subtype = parsed.get("subtype")
     if category not in TAXONOMY or subtype not in subtypes_for(category):
         # Model returned something outside the taxonomy — fall back safely.
-        return _keyword_classify(text)
+        result = _keyword_classify(text)
+        result["followup_question"] = None
+        return result
+
+    followup = parsed.get("followup_question")
     return {
         "category": category,
         "subtype": subtype,
         "severity": parsed.get("severity") or default_severity_for(category, subtype),
         "summary": parsed.get("summary", text.strip()[:200]),
+        "followup_question": followup.strip() if isinstance(followup, str) and followup.strip() else None,
     }
 
 

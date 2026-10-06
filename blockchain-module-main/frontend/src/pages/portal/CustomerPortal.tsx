@@ -7,15 +7,15 @@
 // panel, no speech). See VEMA_PIPELINE.md for the underlying pipeline.
 import { useEffect, useRef, useState } from "react";
 import {
-  Mic, Square, Send, Loader2, LogOut, Volume2, Ticket as TicketIcon,
-  Check, RotateCcw, X, Trash2, PhoneOff,
+  Mic, Send, Loader2, LogOut, Volume2, Ticket as TicketIcon,
+  Check, RotateCcw, X, Trash2, PhoneOff, Bot,
 } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   submitChatComplaint, submitVoiceComplaint, transcribeVoiceComplaint,
-  deleteComplaint, getMyComplaints, Complaint, ragQuery,
+  deleteComplaint, getMyComplaints, Complaint, ragQuery, previewComplaint,
 } from "@/services/api";
 
 interface ConversationTurn {
@@ -41,6 +41,12 @@ const severityStyle: Record<string, string> = {
   small: "bg-muted text-muted-foreground",
 };
 
+const severityBorder: Record<string, string> = {
+  critical: "border-l-destructive",
+  medium: "border-l-warning",
+  small: "border-l-border",
+};
+
 const statusLabel: Record<string, string> = {
   auto_resolved: "Resolved automatically",
   resolved: "Resolved",
@@ -59,6 +65,43 @@ const AFFIRM_WORDS = ["yes", "yeah", "yep", "yup", "sure", "correct", "submit", 
 const AFFIRM_PHRASES = ["go ahead", "send it", "that's right", "sounds good", "file it"];
 const NEGATE_WORDS = ["no", "nope", "wrong", "cancel", "stop", "incorrect", "nah"];
 const NEGATE_PHRASES = ["try again", "not right", "redo it", "start over", "that's wrong"];
+
+// Joins the original complaint with a follow-up answer into one cleanly
+// punctuated sentence instead of two raw utterances glued together (which
+// read like "...not working.. I live in F-11." — a literal double period
+// and an obvious dialogue seam). This is what gets spoken back in the
+// confirm step and submitted; the ticket's stored description is further
+// cleaned up server-side by classify_complaint()'s summary (see
+// vema_orchestrator.create_ticket).
+function joinWithFollowup(original: string, followupAnswer: string): string {
+  const trimmedOriginal = original.trim().replace(/[.!?]+$/, "");
+  const trimmedAnswer = followupAnswer.trim().replace(/[.!?]+$/, "");
+  return `${trimmedOriginal}. ${trimmedAnswer}.`;
+}
+
+// Most speech engines treat a short all-caps token like "VEMA" as an
+// acronym and spell it out letter by letter. Feeding speech a normal-cased
+// version makes it read as a word instead — the visible chat text keeps
+// "VEMA" everywhere; only what's actually sent to the speech engine changes.
+function toSpeechFriendly(text: string): string {
+  return text.replace(/\bVEMA\b/g, "Vema");
+}
+
+// Only ever checked AFTER routeMessage has already classified an utterance
+// as smalltalk/Q&A (never a complaint) — so unlike detectIntent's bare "no",
+// it's safe to include short decline words here without any risk of a real
+// complaint ("no electricity", "nothing works") being mistaken for the
+// customer trying to end the call.
+const DONE_TALKING_WORDS = ["nothing", "nope", "bye", "goodbye"];
+const DONE_TALKING_PHRASES = [
+  "that's all", "that's it", "no thanks", "no thank you", "nothing else",
+  "never mind", "nevermind", "bye bye", "i'm done", "im done", "that is all",
+];
+
+function isDoneTalking(raw: string): boolean {
+  const padded = ` ${raw.toLowerCase().replace(/[^a-z0-9\s']/g, " ")} `;
+  return DONE_TALKING_WORDS.some((w) => padded.includes(` ${w} `)) || DONE_TALKING_PHRASES.some((p) => padded.includes(p));
+}
 
 function detectIntent(raw: string): "yes" | "no" | "unclear" {
   const padded = ` ${raw.toLowerCase().replace(/[^a-z0-9\s']/g, " ")} `;
@@ -93,8 +136,87 @@ function playBeep() {
   }
 }
 
-const GREETING = "Hi, I'm VEMA, your electricity complaint assistant. Tell me what's wrong after the tone.";
-const RETRY_GREETING = "Sure, go ahead — tell me again after the tone.";
+// Picked randomly each time so VEMA doesn't repeat the exact same line on
+// every call/turn — purely cosmetic variety, no LLM round-trip needed for
+// these structural moments (keeps call latency low and never fails).
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+const GREETINGS = [
+  "Hi, I'm VEMA, your electricity complaint assistant. Tell me what's wrong after the tone.",
+  "Hello! I'm VEMA. Go ahead and tell me what's going on, after the tone.",
+  "Hi there, this is VEMA. What can I help you report today? Go ahead after the tone.",
+];
+const RETRY_GREETINGS = [
+  "Sure, go ahead — tell me again after the tone.",
+  "No problem, try again after the tone.",
+  "Okay, go ahead and tell me once more after the tone.",
+];
+const DIDNT_CATCH = [
+  "I didn't catch anything. Please try again.",
+  "Hmm, I didn't hear anything that time — go ahead and try again.",
+  "Sorry, I missed that. Could you try again?",
+];
+const CONFIRM_TEMPLATES = (text: string) => [
+  `You said: "${text}". Say submit to file this complaint, or try again to redo it.`,
+  `Just to confirm — "${text}". Shall I go ahead and file this, or would you like to try again?`,
+  `Here's what I've got: "${text}". Say submit if that's right, or try again if I misheard something.`,
+];
+const TRY_AGAIN_ACK = [
+  "No problem — let's try again.",
+  "Sure, let's give it another go.",
+  "Okay, let's redo that.",
+];
+const SUBMIT_FAILED = [
+  "Sorry, something went wrong filing that complaint. Let's try again.",
+  "Hmm, that didn't go through — let's try that again.",
+];
+const ANYTHING_ELSE = [
+  "Would you like to report anything else? Say yes or no.",
+  "Is there anything else you'd like to report? Just say yes or no.",
+  "Anything else on your mind? Say yes or no.",
+];
+const GOODBYE = [
+  "Thanks for calling NEXUS. Have a good day.",
+  "Thanks for reaching out to NEXUS — take care!",
+  "Alright, thanks for calling. Have a great day.",
+];
+
+// ─── VEMA voice orb — a state-driven avatar shown during a call, replacing
+// the plain status dot with something that actually reads as "alive":
+// pulsing rings while speaking/listening, a spinner while thinking, calm
+// otherwise. Reuses the app's existing pulse-node/fade-in keyframes rather
+// than inventing new animation primitives.
+type OrbState = "idle" | "speaking" | "listening" | "thinking";
+
+function VemaOrb({ state }: { state: OrbState }) {
+  const ringColor =
+    state === "speaking" ? "bg-primary" : state === "listening" ? "bg-destructive" : "";
+  const coreClass =
+    state === "speaking"
+      ? "bg-primary text-primary-foreground"
+      : state === "listening"
+      ? "bg-destructive text-destructive-foreground"
+      : "bg-muted text-muted-foreground";
+
+  return (
+    <div className="relative w-14 h-14 flex items-center justify-center flex-shrink-0">
+      {ringColor && (
+        <>
+          <span className={`absolute inset-0 rounded-full ${ringColor} opacity-40 animate-pulse-node`} />
+          <span
+            className={`absolute inset-0 rounded-full ${ringColor} opacity-25 animate-pulse-node`}
+            style={{ animationDelay: "0.6s" }}
+          />
+        </>
+      )}
+      <div className={`relative w-10 h-10 rounded-full flex items-center justify-center transition-colors duration-300 ${coreClass}`}>
+        {state === "thinking" ? <Loader2 size={18} className="animate-spin" /> : <Bot size={18} />}
+      </div>
+    </div>
+  );
+}
 
 const CustomerPortal = () => {
   const { user, logout } = useAuth();
@@ -115,6 +237,7 @@ const CustomerPortal = () => {
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const autoStopTimerRef = useRef<number | null>(null);
+  const vadFrameRef = useRef<number | null>(null);
   const callTokenRef = useRef(0); // bumped to invalidate any in-flight call loop
   const scrollRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef<HTMLTextAreaElement>(null);
@@ -149,7 +272,7 @@ const CustomerPortal = () => {
         return;
       }
       window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
+      const utter = new SpeechSynthesisUtterance(toSpeechFriendly(text));
       utter.rate = 1;
       utter.pitch = 1;
       utter.lang = "en-US";
@@ -160,14 +283,64 @@ const CustomerPortal = () => {
       window.speechSynthesis.speak(utter);
     });
 
-  // Records one clip (up to maxMs, or until stopRecordingManually()/cancel).
+  // Records one clip, stopping automatically once the customer pauses after
+  // speaking — no manual "Done" tap needed. Voice-activity detection via the
+  // Web Audio API: watches the mic's RMS volume in real time, and once real
+  // speech has been heard, a sustained quiet stretch (SILENCE_MS) ends the
+  // clip. maxMs stays as a hard safety cap in case VAD never triggers (e.g.
+  // constant background noise never dips below the threshold).
+  const SILENCE_RMS_THRESHOLD = 0.02;
+  const SILENCE_MS = 1400;
+  const MIN_SPEECH_MS = 300;
+
   const recordOnce = (maxMs: number): Promise<Blob> =>
     new Promise((resolve, reject) => {
       navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
         const recorder = new MediaRecorder(stream);
         const chunks: Blob[] = [];
         recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+        const AudioCtx = window.AudioContext
+          || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        const audioCtx = AudioCtx ? new AudioCtx() : null;
+        let speechStart: number | null = null;
+        let silenceStart: number | null = null;
+
+        if (audioCtx) {
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+          const data = new Uint8Array(analyser.fftSize);
+
+          const checkVolume = () => {
+            analyser.getByteTimeDomainData(data);
+            let sumSquares = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = (data[i] - 128) / 128;
+              sumSquares += v * v;
+            }
+            const rms = Math.sqrt(sumSquares / data.length);
+            const now = performance.now();
+
+            if (rms > SILENCE_RMS_THRESHOLD) {
+              if (speechStart === null) speechStart = now;
+              silenceStart = null;
+            } else if (speechStart !== null && now - speechStart > MIN_SPEECH_MS) {
+              if (silenceStart === null) silenceStart = now;
+              else if (now - silenceStart > SILENCE_MS) {
+                if (recorder.state === "recording") recorder.stop();
+                return;
+              }
+            }
+            vadFrameRef.current = requestAnimationFrame(checkVolume);
+          };
+          vadFrameRef.current = requestAnimationFrame(checkVolume);
+        }
+
         recorder.onstop = () => {
+          if (vadFrameRef.current !== null) { cancelAnimationFrame(vadFrameRef.current); vadFrameRef.current = null; }
+          if (audioCtx) audioCtx.close().catch(() => {});
           stream.getTracks().forEach((t) => t.stop());
           setRecording(false);
           if (autoStopTimerRef.current) { window.clearTimeout(autoStopTimerRef.current); autoStopTimerRef.current = null; }
@@ -184,10 +357,6 @@ const CustomerPortal = () => {
         reject(err);
       });
     });
-
-  const stopRecordingManually = () => {
-    if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
-  };
 
   // Stops whatever the call loop is mid-way through, without narrating it.
   function cancelActiveCallLoop() {
@@ -244,7 +413,7 @@ const CustomerPortal = () => {
     const isCurrent = () => callTokenRef.current === myToken;
     setCallActive(true);
 
-    const opener = skipGreeting ? RETRY_GREETING : GREETING;
+    const opener = skipGreeting ? pick(RETRY_GREETINGS) : pick(GREETINGS);
     pushTurn({ id: crypto.randomUUID(), role: "vema", text: opener });
     await speak(opener);
     if (!isCurrent()) return;
@@ -270,7 +439,7 @@ const CustomerPortal = () => {
       if (!isCurrent()) return;
 
       if (!transcript) {
-        const msg = "I didn't catch anything. Please try again.";
+        const msg = pick(DIDNT_CATCH);
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: msg });
         await speak(msg);
         if (!isCurrent()) return;
@@ -282,20 +451,68 @@ const CustomerPortal = () => {
       const directReply = await routeMessage(transcript);
       if (!isCurrent()) return;
       if (directReply !== null) {
-        // A question or smalltalk, not a complaint — answer directly and
-        // keep listening, no draft/confirm/ticket for this turn.
+        // Not a complaint. If it also reads like a decline/goodbye ("nothing,
+        // thanks", "bye"), end the call instead of repeating the generic
+        // smalltalk prompt and leaving the customer stuck in a loop.
+        if (isDoneTalking(transcript)) {
+          const bye = pick(GOODBYE);
+          pushTurn({ id: crypto.randomUUID(), role: "vema", text: bye });
+          await speak(bye);
+          break;
+        }
+        // A genuine question or smalltalk — answer directly and keep
+        // listening, no draft/confirm/ticket for this turn.
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: directReply });
         await speak(directReply);
         if (!isCurrent()) return;
         continue;
       }
 
-      setDraft({ text: transcript, source: "voice" });
+      // --- optional one clarifying follow-up before drafting (never blocks:
+      // any preview failure just skips straight to the draft+confirm step
+      // with the transcript as-is) ---
+      let enrichedTranscript = transcript;
+      try {
+        setRouting(true);
+        const preview = await previewComplaint(transcript);
+        setRouting(false);
+        if (!isCurrent()) return;
+        if (preview.followup_question) {
+          pushTurn({ id: crypto.randomUUID(), role: "vema", text: preview.followup_question });
+          await speak(preview.followup_question);
+          if (!isCurrent()) return;
+
+          playBeep();
+          let followupAnswer = "";
+          try {
+            const blobF = await recordOnce(8000);
+            if (!isCurrent()) return;
+            setTranscribing(true);
+            const resF = await transcribeVoiceComplaint(blobF);
+            followupAnswer = resF.transcript.trim();
+          } catch {
+            followupAnswer = "";
+          } finally {
+            setTranscribing(false);
+          }
+          if (!isCurrent()) return;
+
+          if (followupAnswer) {
+            pushTurn({ id: crypto.randomUUID(), role: "customer", text: followupAnswer });
+            enrichedTranscript = joinWithFollowup(transcript, followupAnswer);
+          }
+        }
+      } catch {
+        setRouting(false);
+      }
+      if (!isCurrent()) return;
+
+      setDraft({ text: enrichedTranscript, source: "voice" });
 
       // --- confirm loop: read it back, listen for yes / try again ---
       let decision: "yes" | "no" | "unclear" = "unclear";
       for (let attempt = 0; attempt < 2 && decision === "unclear"; attempt++) {
-        const confirmMsg = `You said: "${transcript}". Say submit to file this complaint, or try again to redo it.`;
+        const confirmMsg = pick(CONFIRM_TEMPLATES(enrichedTranscript));
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: confirmMsg });
         await speak(confirmMsg);
         if (!isCurrent()) return;
@@ -322,7 +539,7 @@ const CustomerPortal = () => {
       if (decision === "yes") {
         setSubmittingDraft(true);
         try {
-          const result = await doSubmit(transcript, "voice");
+          const result = await doSubmit(enrichedTranscript, "voice");
           pushTurn({
             id: crypto.randomUUID(), role: "vema", text: result.replyText,
             ticketCode: result.ticketCode, severity: result.classification?.severity,
@@ -335,7 +552,7 @@ const CustomerPortal = () => {
           await speak(result.replyText);
         } catch {
           setSubmittingDraft(false);
-          const msg = "Sorry, something went wrong filing that complaint. Let's try again.";
+          const msg = pick(SUBMIT_FAILED);
           pushTurn({ id: crypto.randomUUID(), role: "vema", text: msg });
           await speak(msg);
           if (!isCurrent()) return;
@@ -343,14 +560,14 @@ const CustomerPortal = () => {
         }
       } else {
         setDraft(null);
-        const msg = "No problem — let's try again.";
+        const msg = pick(TRY_AGAIN_ACK);
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: msg });
         await speak(msg);
       }
       if (!isCurrent()) return;
 
       // --- ask whether to log another complaint ---
-      const followMsg = "Would you like to report anything else? Say yes or no.";
+      const followMsg = pick(ANYTHING_ELSE);
       pushTurn({ id: crypto.randomUUID(), role: "vema", text: followMsg });
       await speak(followMsg);
       if (!isCurrent()) return;
@@ -372,7 +589,7 @@ const CustomerPortal = () => {
 
       pushTurn({ id: crypto.randomUUID(), role: "customer", text: more || "(no response)" });
       if (detectIntent(more) !== "yes") {
-        const bye = "Thanks for calling NEXUS. Have a good day.";
+        const bye = pick(GOODBYE);
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: bye });
         await speak(bye);
         break;
@@ -475,10 +692,18 @@ const CustomerPortal = () => {
 
   const inputsDisabled = recording || transcribing || !!draft || submittingDraft || routing || callActive;
 
+  const orbState: OrbState = speaking
+    ? "speaking"
+    : recording
+    ? "listening"
+    : transcribing || routing || submittingDraft
+    ? "thinking"
+    : "idle";
+
   const callStatusText = speaking
     ? "VEMA is speaking…"
     : recording
-    ? "Listening — tap Done when you're finished"
+    ? "Listening…"
     : transcribing
     ? "Transcribing…"
     : routing
@@ -510,8 +735,13 @@ const CustomerPortal = () => {
         <main className="flex-1 flex flex-col min-h-0">
           <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin p-4 sm:p-6 space-y-4">
             {turns.length === 0 && !draft && !callActive && (
-              <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground gap-3 py-16">
-                <Mic size={32} className="text-primary" />
+              <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground gap-3 py-16 animate-fade-in">
+                <div className="relative w-16 h-16 flex items-center justify-center mb-1">
+                  <span className="absolute inset-0 rounded-full bg-primary/15 animate-pulse-node" />
+                  <div className="relative w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Mic size={22} className="text-primary" />
+                  </div>
+                </div>
                 <p className="font-medium text-foreground">Talk to VEMA, or type your complaint</p>
                 <p className="text-sm max-w-sm">
                   Tap the microphone for a guided voice call — VEMA will ask what's wrong,
@@ -521,7 +751,15 @@ const CustomerPortal = () => {
               </div>
             )}
             {turns.map((t) => (
-              <div key={t.id} className={`flex ${t.role === "customer" ? "justify-end" : "justify-start"}`}>
+              <div
+                key={t.id}
+                className={`flex items-end gap-2 animate-slide-up ${t.role === "customer" ? "justify-end" : "justify-start"}`}
+              >
+                {t.role === "vema" && (
+                  <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                    <Bot size={14} />
+                  </div>
+                )}
                 <div
                   className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 text-sm ${
                     t.role === "customer" ? "bg-primary text-primary-foreground" : "glass-card"
@@ -552,17 +790,28 @@ const CustomerPortal = () => {
                     </button>
                   )}
                 </div>
+                {t.role === "customer" && (
+                  <div className="w-7 h-7 rounded-full bg-muted text-foreground flex items-center justify-center flex-shrink-0 text-[11px] font-semibold">
+                    {(user?.name?.[0] || "U").toUpperCase()}
+                  </div>
+                )}
               </div>
             ))}
             {transcribing && (
-              <div className="flex justify-start">
+              <div className="flex items-end gap-2 justify-start animate-fade-in">
+                <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                  <Bot size={14} />
+                </div>
                 <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" /> Transcribing…
                 </div>
               </div>
             )}
             {routing && !callActive && (
-              <div className="flex justify-start">
+              <div className="flex items-end gap-2 justify-start animate-fade-in">
+                <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
+                  <Bot size={14} />
+                </div>
                 <div className="glass-card px-4 py-2.5 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 size={14} className="animate-spin" /> Thinking…
                 </div>
@@ -570,23 +819,14 @@ const CustomerPortal = () => {
             )}
           </div>
 
-          {/* Live call status bar — visible for the whole call, alongside the review panel too */}
+          {/* In-call panel — the orb is the visual focus, replacing a plain status dot */}
           {callActive && (
-            <div className="flex-shrink-0 border-t border-border p-3 bg-primary/5 flex items-center gap-3">
-              <span
-                className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                  speaking ? "bg-primary animate-pulse" : recording ? "bg-destructive animate-pulse" : "bg-muted-foreground/40"
-                }`}
-              />
-              <span className="text-sm text-muted-foreground flex-1">{callStatusText}</span>
-              {recording && (
-                <button
-                  onClick={stopRecordingManually}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted text-foreground text-xs font-medium hover:bg-muted/70"
-                >
-                  <Square size={13} /> Done
-                </button>
-              )}
+            <div className="flex-shrink-0 border-t border-border p-4 bg-gradient-to-b from-primary/[0.06] to-transparent flex items-center gap-4">
+              <VemaOrb state={orbState} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">{callStatusText}</p>
+                <p className="text-xs text-muted-foreground">Talking with VEMA</p>
+              </div>
               <button
                 onClick={endCall}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-destructive text-destructive-foreground text-xs font-medium"
@@ -683,7 +923,7 @@ const CustomerPortal = () => {
             <p className="text-sm text-muted-foreground">No tickets yet — log a complaint to get started.</p>
           )}
           {tickets.map((t) => (
-            <div key={t.id} className="glass-card p-3">
+            <div key={t.id} className={`glass-card p-3 border-l-2 animate-slide-up ${severityBorder[t.severity] || "border-l-border"}`}>
               <div className="flex items-center justify-between gap-2 mb-1">
                 <span className="text-xs font-mono text-muted-foreground">{t.ticket_code}</span>
                 <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${severityStyle[t.severity]}`}>
