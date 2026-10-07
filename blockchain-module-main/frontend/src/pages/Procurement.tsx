@@ -12,6 +12,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import InvoiceModal from "@/components/InvoiceModal";
+import { formatPKR } from "@/lib/currency";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -301,7 +302,7 @@ const Procurement = () => {
             </div>
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">
-                Unit Price (USD) <span className="text-muted-foreground text-xs">— auto-filled from catalog, editable</span>
+                Unit Price (PKR) <span className="text-muted-foreground text-xs">— auto-filled from catalog, editable</span>
               </label>
               <input
                 type="number"
@@ -314,7 +315,7 @@ const Procurement = () => {
                 <p className="text-xs text-muted-foreground mt-1.5">
                   Estimated total:{" "}
                   <span className="font-mono font-semibold text-primary">
-                    USD {estimatedTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {formatPKR(estimatedTotal)}
                   </span>{" "}
                   + blockchain verification fee — you'll see the full bill after placing the order.
                 </p>

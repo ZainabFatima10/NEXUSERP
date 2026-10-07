@@ -234,16 +234,39 @@ The check-ins stop the moment arrival is confirmed
 (`confirm_arrival_endpoint` clears `next_status_checkin_due` outright; the
 job's own `contract_status` filter is the second line of defense).
 
-## Payment lifecycle — mocked in Phase 2, real Stripe in Phase 4
+## Payments — PKR only (`payments.py`, migration `013_add_payment_methods.sql`)
 
-Per the agreed Phase 2 scope, `payment_mock_service.py` simulates
-authorize/capture/cancel (always "succeeds," returns a fake
-`payment_ref`) behind the exact interface Phase 4's real Stripe
-integration will implement — `vendor_orders.py` is already written against
-that final shape, so swapping in real `stripe.PaymentIntent` calls later
-needs zero caller-side changes. `vendor_orders.payment_status` already
-tracks the full intended lifecycle (`Not Required` → `Authorized` →
-`Captured` / `Cancelled` / `Failed`).
+All money is Pakistani Rupees, enforced by `CHECK (currency = 'PKR')` on
+`vendor_orders`, `payment_methods` and `payment_transactions`.
+
+| When | What happens to the money | Code |
+|---|---|---|
+| Order placed | `total_amount = subtotal + platform_fee` (`PLATFORM_FEE_RATE`, default 0.5%). `vendor_payout_amount = subtotal`. Nothing charged. | `place_vendor_order` |
+| Vendor accepts | `total_amount` **authorized** (held) on the admin's default payment method, *then* the contract is created with `amount` in paisa and `paymentRef = keccak256(payment_ref)`. No default method -> `Payment Required` + `payment.required` notification; setting a default later auto-authorizes waiting orders. | `payments.authorize_for_order` |
+| Orderer approves receipt (only after `Arrived`) | Refused (409) unless funds are held. Contract executes on-chain, hold is **captured**, payout scheduled for `NOW() + PAYOUT_SETTLEMENT_HOURS` (default 24). | `payments.capture_for_order` |
+| Payout due | Scheduler (`process_due_payouts`, every 5 min) pays `vendor_payout_amount` to the vendor's IBAN on file and emails the vendor. Admin can "Pay now" from Payments. No IBAN -> payout `Failed`, retryable. | `payments.release_payout` |
+| Dispute -> Cancelled, or admin cancels an in-flight contract (`POST /api/vendor-orders/{id}/cancel-contract`) | Hold released, payout `Not Applicable`. | `payments.cancel_for_order` |
+| Dispute -> Executed | Same as approval: capture + scheduled payout. | |
+
+**Who moves the money — `PAYMENT_PROVIDER`** (`payment_providers.py`):
+`mock` simulates everything. `manual` is the real process with an ordinary
+business bank account: when a payout falls due it becomes **Awaiting
+Transfer** and appears under "Transfers to make" on the Payments page with
+the vendor's account title, bank, full IBAN, amount and a reference
+(`NEXUS VO-XXXXXX`), plus a bulk-upload CSV. An admin sends it from the
+bank's corporate portal (Raast or IBFT) and records the bank's transaction
+ID (`POST /api/payments/orders/{id}/confirm-payout`, duplicate references
+rejected). Only then is it Paid and the vendor emailed. `raast_api`
+(automated payouts via a licensed Raast Business API provider) is reserved
+and refuses to start until implemented against that provider's docs.
+`PAYMENT_MAX_ORDER_PKR` (default 10,000,000) caps a single order's total.
+
+Every money movement is logged to `payment_transactions`. The admin
+**Payments** page (`/admin/payments`) shows the ledger, summary, payment
+methods (bank transfer/IBAN, Raast, JazzCash, Easypaisa — stored in full,
+returned masked) and a plain explanation of the flow. The processor itself
+(`payment_mock_service.py`) is still simulated — a real PKR gateway slots
+in behind the same four functions.
 
 ## Invoice — ReportLab PDF reused unchanged
 

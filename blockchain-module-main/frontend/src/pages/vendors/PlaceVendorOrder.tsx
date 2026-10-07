@@ -7,7 +7,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Loader2, Plus, Trash2, ShoppingCart } from "lucide-react";
-import { listVendors, getVendorItems, placeVendorOrder, Vendor, VendorItem } from "@/services/api";
+import { listVendors, getVendorItems, placeVendorOrder, getPaymentsConfig, Vendor, VendorItem } from "@/services/api";
+import { formatPKR } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
 
 interface LocationState {
@@ -37,6 +38,12 @@ const PlaceVendorOrder = () => {
   const [loading, setLoading] = useState(true);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [placing, setPlacing] = useState(false);
+  const [feeRate, setFeeRate] = useState(0.005);
+  const [maxOrderTotal, setMaxOrderTotal] = useState<number | null>(null);
+
+  useEffect(() => {
+    getPaymentsConfig().then((c) => { setFeeRate(c.platform_fee_rate); setMaxOrderTotal(c.max_order_total); }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     listVendors().then((res) => setVendors(res.vendors)).catch(() => {
@@ -75,7 +82,8 @@ const PlaceVendorOrder = () => {
     return sum + (it ? it.unit_price * r.quantity : 0);
   }, 0);
 
-  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && r.quantity > 0);
+  const overCap = maxOrderTotal != null && subtotal * (1 + feeRate) > maxOrderTotal;
+  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && r.quantity > 0) && !overCap;
 
   const handleSubmit = async () => {
     setPlacing(true);
@@ -157,7 +165,7 @@ const PlaceVendorOrder = () => {
                     className="flex-1 px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border"
                   >
                     <option value="">— Select item —</option>
-                    {items.map((i) => <option key={i.id} value={i.id}>{i.name} (PKR {i.unit_price.toLocaleString()}/{i.unit})</option>)}
+                    {items.map((i) => <option key={i.id} value={i.id}>{i.name} ({formatPKR(i.unit_price)}/{i.unit})</option>)}
                   </select>
                   <input
                     type="number" min={0.01} step="any" value={row.quantity}
@@ -165,7 +173,7 @@ const PlaceVendorOrder = () => {
                     className="w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border"
                   />
                   <span className="text-sm text-muted-foreground w-28 text-right font-mono">
-                    {it ? `PKR ${(it.unit_price * row.quantity).toLocaleString()}` : "—"}
+                    {it ? formatPKR(it.unit_price * row.quantity) : "—"}
                   </span>
                   <button onClick={() => removeRow(idx)} className="text-muted-foreground hover:text-destructive"><Trash2 size={16} /></button>
                 </div>
@@ -178,9 +186,21 @@ const PlaceVendorOrder = () => {
         </div>
 
         {rows.length > 0 && (
-          <p className="text-right font-semibold text-primary font-mono">
-            Subtotal: PKR {subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
+          <div className="ml-auto max-w-xs text-sm space-y-1 font-mono">
+            <p className="flex justify-between text-muted-foreground"><span className="font-sans">Subtotal (paid to vendor)</span><span>{formatPKR(subtotal)}</span></p>
+            <p className="flex justify-between text-muted-foreground">
+              <span className="font-sans">Platform fee ({(feeRate * 100).toFixed(1)}%)</span><span>{formatPKR(Math.round(subtotal * feeRate * 100) / 100)}</span>
+            </p>
+            <p className="flex justify-between font-semibold text-primary border-t border-border pt-1">
+              <span className="font-sans">Total</span><span>{formatPKR(Math.round(subtotal * (1 + feeRate) * 100) / 100)}</span>
+            </p>
+            <p className="text-[11px] text-muted-foreground font-sans text-right">Held in escrow once the vendor accepts; captured after you approve delivery.</p>
+            {overCap && (
+              <p className="text-xs text-destructive font-sans text-right">
+                Over the per-order payment limit of {formatPKR(maxOrderTotal, { decimals: false })} — split this into smaller orders.
+              </p>
+            )}
+          </div>
         )}
 
         <button

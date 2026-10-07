@@ -14,6 +14,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import InvoiceModal from "@/components/InvoiceModal";
+import { formatPKR } from "@/lib/currency";
 
 type SortDir = "asc" | "desc";
 
@@ -396,7 +397,7 @@ const Inventory = () => {
                         : item.days_until_reorder}
                     </td>
                     <td className="px-4 py-3 text-sm font-mono text-muted-foreground">
-                      {item.unit_price != null ? `USD ${item.unit_price.toLocaleString()}` : "—"}
+                      {item.unit_price != null ? formatPKR(item.unit_price) : "—"}
                     </td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">{item.vendor_name}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">

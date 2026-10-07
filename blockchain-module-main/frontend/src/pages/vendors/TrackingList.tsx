@@ -13,6 +13,7 @@ import {
 import { listTracking, getTrackingSummary, subscribeToNotifications, TrackingOrderRow, TrackingSummary } from "@/services/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { formatPKR } from "@/lib/currency";
 
 const SUMMARY_CARDS: { key: keyof TrackingSummary; label: string; icon: typeof Clock; color: string }[] = [
   { key: "awaiting_vendor", label: "Awaiting Vendor", icon: Clock, color: "text-warning" },
@@ -179,7 +180,7 @@ const TrackingList = () => {
                   {o.delayed && <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-warning/10 text-warning flex items-center gap-1"><AlertTriangle size={10} /> Delayed</span>}
                 </div>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  {o.vendor_name} → {o.destination_name} · {o.total_amount.toLocaleString()} {o.currency}
+                  {o.vendor_name} → {o.destination_name} · {formatPKR(o.total_amount)}
                 </p>
                 <MiniProgress order={o} />
               </div>

@@ -63,7 +63,7 @@ def send_vendor_order_email(
 ) -> bool:
     """Send order notification + confirmation link to vendor."""
     confirm_url = f"{BASE_URL}/api/procurement/confirm/{confirm_token}"
-    price_row = f"<tr><td><b>Total Price</b></td><td>USD {total_price:,.2f}</td></tr>" if total_price else ""
+    price_row = f"<tr><td><b>Total Price</b></td><td>PKR {total_price:,.2f}</td></tr>" if total_price else ""
 
     html = f"""
     <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
@@ -411,6 +411,186 @@ def send_vendor_needs_info_email(
     </div></body></html>
     """
     return _send(to_email, "Action Needed on Your Vendor Application — NEXUS ERP", html)
+
+
+def send_vendor_order_placed_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    destination: str,
+    items: list,
+    subtotal: float,
+    total_amount: float,
+    currency: str,
+    expires_at: str,
+    accept_url: str,
+    reject_url: str,
+) -> bool:
+    """Phase 2 (vendor_orders.py): new order against the vendor's own
+    catalogue — itemized bill + Accept/Reject, no login needed. Direct-SMTP
+    counterpart of n8n's vendor-order-email.workflow.json (same copy/design),
+    used when N8N isn't actually running — see n8n_service.py."""
+    rows = "".join(
+        f"""<tr style="{'background:#f0f4fb;' if i % 2 else ''}">
+              <td style="padding:10px 14px;">{it['name']}</td>
+              <td style="padding:10px 14px;">{it['quantity']:,.0f} {it['unit']}</td>
+              <td style="padding:10px 14px;">{currency} {it['unit_price']:,.2f}</td>
+              <td style="padding:10px 14px;">{currency} {it['line_total']:,.2f}</td>
+            </tr>"""
+        for i, it in enumerate(items)
+    )
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">NEXUS ERP — Purchase Order</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">PowerGrid Optimizer</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{vendor_name}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          We'd like to place order <b>{order_code}</b> with you, shipping to
+          <b>{destination}</b>. Please review the items below and Accept or Reject —
+          no login needed.
+        </p>
+        <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:13px;">
+          <tr style="text-align:left;color:#001F54;">
+            <th style="padding:8px 14px;">Item</th><th style="padding:8px 14px;">Qty</th>
+            <th style="padding:8px 14px;">Unit Price</th><th style="padding:8px 14px;">Total</th>
+          </tr>
+          {rows}
+        </table>
+        <p style="text-align:right;font-weight:700;color:#001F54;font-size:15px;">
+          Subtotal: {currency} {subtotal:,.2f} &nbsp;·&nbsp; Total: {currency} {total_amount:,.2f}
+        </p>
+        <div style="text-align:center;margin:28px 0 12px;">
+          <a href="{accept_url}" style="background:#2e7d5e;color:#fff;padding:14px 32px;border-radius:24px;
+             text-decoration:none;font-weight:700;font-size:15px;display:inline-block;margin:0 6px;">
+            ✅ Accept
+          </a>
+          <a href="{reject_url}" style="background:#b91c1c;color:#fff;padding:14px 32px;border-radius:24px;
+             text-decoration:none;font-weight:700;font-size:15px;display:inline-block;margin:0 6px;">
+            ❌ Reject
+          </a>
+        </div>
+        <p style="color:#888;font-size:12px;">This link expires {expires_at}.</p>
+      </div>
+    </div></body></html>
+    """
+    return _send(vendor_email, f"Purchase Order {order_code} — Action Required", html)
+
+
+def send_vendor_order_shipment_link_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    shipment_update_url: str,
+) -> bool:
+    """Sent right after the vendor accepts — the no-login link to report
+    Dispatched / In Transit / Out for Delivery updates."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Order {order_code} Accepted</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">Your Shipment Update Link</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{vendor_name}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          Thanks for accepting order <b>{order_code}</b>. Use the link below any time over the
+          next 30 days to tell us when it's dispatched and where it is in transit — no login needed.
+        </p>
+        <div style="text-align:center;margin:28px 0 12px;">
+          <a href="{shipment_update_url}" style="background:#001F54;color:#fff;padding:14px 36px;
+             border-radius:24px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+            📦 Report Shipment Status
+          </a>
+        </div>
+        <p style="color:#aaa;font-size:11px;">
+          Keep this link — it's reusable for every update on this order until it's delivered.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(vendor_email, f"Order {order_code} Accepted — Your Shipment Update Link", html)
+
+
+def send_vendor_order_status_checkin_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    contract_status: str,
+    shipment_update_url: str,
+) -> bool:
+    """~3x/day while a shipment is in flight (vendor_orders.check_vendor_status_checkins)."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Quick Status Check-in</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">Order {order_code}</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{vendor_name}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          Just checking in on order <b>{order_code}</b> — it's currently marked
+          <b>{contract_status}</b> in our system. If that's changed, let us know in one click,
+          no login needed.
+        </p>
+        <div style="text-align:center;margin:28px 0 12px;">
+          <a href="{shipment_update_url}" style="background:#001F54;color:#fff;padding:14px 36px;
+             border-radius:24px;text-decoration:none;font-weight:700;font-size:15px;display:inline-block;">
+            📦 Update Delivery Status
+          </a>
+        </div>
+        <p style="color:#aaa;font-size:11px;">
+          We'll keep checking in a few times a day until this order is marked delivered — once
+          it's out for delivery or arrived, these stop automatically.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send(vendor_email, f"Quick check-in — what's the status of order {order_code}?", html)
+
+
+def send_vendor_order_payment_released_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    total_amount: float,
+    currency: str,
+    payout_ref: str = None,
+) -> bool:
+    """Sent when the vendor payout is made (after the contract executes and
+    the settlement window elapses). total_amount is the vendor's payout."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:560px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Payment Released — Order {order_code}</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Payment Confirmation</p>
+      </div>
+      <div style="padding:32px;">
+        <div style="background:#f0f9f4;border:1px solid #cdeedb;border-radius:12px;padding:16px 20px;margin-bottom:24px;">
+          <p style="color:#2e7d5e;font-weight:700;margin:0;font-size:15px;">✅ Receipt Approved — Payment Released</p>
+        </div>
+        <p style="color:#333;">Dear <b>{vendor_name}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          The orderer has confirmed and approved receipt of order <b>{order_code}</b>. The smart
+          contract has executed and a payment of <b>{currency} {total_amount:,.2f}</b> has been transferred
+          to the bank account (IBAN) you registered with us.
+        </p>
+        {f'<p style="color:#555;font-size:13px;">Payment reference: <b>{payout_ref}</b></p>' if payout_ref else ''}
+        <p style="color:#aaa;font-size:11px;">This is an automated confirmation — no further action is needed.</p>
+      </div>
+    </div></body></html>
+    """
+    return _send(vendor_email, f"Payment Released — Order {order_code}", html)
 
 
 def send_internal_notification_email(

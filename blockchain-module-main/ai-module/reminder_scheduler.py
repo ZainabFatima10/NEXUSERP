@@ -17,6 +17,7 @@ from notification_service import notify_role
 from taxonomy import REMINDER_INTERVAL_MINUTES
 import shipment_chain_service
 import vendor_orders
+import payments
 import notification_engine
 
 _scheduler = None
@@ -82,6 +83,7 @@ def _run_vendor_order_jobs():
         vendor_orders.check_delayed_shipments,
         vendor_orders.check_vendor_status_checkins,
         vendor_orders.check_chain_health,
+        payments.process_due_payouts,
     ):
         try:
             with db_session() as db:

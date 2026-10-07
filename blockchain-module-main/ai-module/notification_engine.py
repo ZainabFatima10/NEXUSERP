@@ -72,6 +72,8 @@ EVENT_META = {
     "payment.required":           {"category": "Payments", "severity": "critical", "requires_action": True, "action_label": "Add payment method", "recipients": ["admin", "$orderer"]},
     "payment.captured":             {"category": "Payments", "severity": "success", "recipients": ["$orderer", "admin"], "email": True},
     "payment.failed":                {"category": "Payments", "severity": "critical", "recipients": ["$orderer", "admin"], "email": True},
+    "payment.transfer_required":     {"category": "Payments", "severity": "warning", "requires_action": True, "action_label": "Record transfer", "recipients": ["admin"], "email": True},
+    "payment.payout_sent":            {"category": "Payments", "severity": "success", "recipients": ["$orderer", "admin"]},
 
     "shipment.dispatched":             {"category": "Shipments", "severity": "info", "recipients": ["$orderer"], "email": True},
     "shipment.in_transit":              {"category": "Shipments", "severity": "info", "recipients": ["$orderer"]},
@@ -84,6 +86,7 @@ EVENT_META = {
 
     "contract.executed":                           {"category": "Confirmations", "severity": "success", "recipients": ["$orderer", "admin", "procurement_manager"], "email": True},
     "dispute.opened":                                {"category": "Shipments", "severity": "warning", "recipients": ["admin"], "email": True},
+    "contract.cancelled":                              {"category": "Shipments", "severity": "warning", "recipients": ["$orderer", "procurement_manager"], "email": True},
     "dispute.resolved":                                {"category": "Shipments", "severity": "info", "recipients": ["$orderer"], "email": True},
 
     "chain.unreachable":                                 {"category": "System", "severity": "warning", "recipients": ["admin"]},

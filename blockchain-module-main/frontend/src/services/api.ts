@@ -1081,7 +1081,10 @@ export interface PlaceVendorOrderPayload {
 }
 
 export const placeVendorOrder = (payload: PlaceVendorOrderPayload) =>
-  apiFetch<{ order_id: string; order_code: string; status: string; vendor_email_status: string; message: string }>(
+  apiFetch<{
+    order_id: string; order_code: string; status: string; vendor_email_status: string; message: string;
+    subtotal: number; platform_fee: number; total_amount: number; vendor_payout_amount: number;
+  }>(
     "/api/vendor-orders",
     { method: "POST", body: JSON.stringify(payload) }
   );
@@ -1091,6 +1094,13 @@ export const resendVendorOrderRequest = (orderId: string) =>
 
 export const cancelVendorOrder = (orderId: string) =>
   apiFetch<{ message: string }>(`/api/vendor-orders/${orderId}/cancel`, { method: "POST" });
+
+/** Admin-only: cancel an accepted, not-yet-arrived contract on-chain and release the payment hold. */
+export const cancelVendorContract = (orderId: string, reason: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-orders/${orderId}/cancel-contract`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 
 // --- Public, no-login vendor pages ------------------------------------------
 
@@ -1111,6 +1121,8 @@ export interface PublicVendorOrderSummary {
   status: string;
   subtotal: number;
   total_amount: number;
+  platform_fee: number;
+  vendor_payout_amount: number;
   currency: string;
   expires_at: string;
   already_responded: boolean;
@@ -1219,10 +1231,19 @@ export interface TrackingOrderRow {
   destination_city: string | null;
   status: "PENDING_VENDOR" | "ACCEPTED" | "REJECTED" | "EXPIRED" | "CANCELLED";
   contract_status: string;
-  payment_status: string;
+  payment_status: PaymentStatus;
   subtotal: number;
+  platform_fee: number;
   total_amount: number;
+  vendor_payout_amount: number | null;
   currency: string;
+  payout_status: PayoutStatus;
+  payout_due_at: string | null;
+  payout_paid_at: string | null;
+  payout_ref: string | null;
+  payment_ref: string | null;
+  payment_authorized_at: string | null;
+  payment_captured_at: string | null;
   expires_at: string;
   requested_delivery_date: string | null;
   shipment_status: string | null;
@@ -1298,6 +1319,21 @@ export interface TrackingDetail {
   shipment: PublicShipment | null;
   events: ShipmentEvent[];
   chain_live_state: Record<string, unknown> | null;
+  chain_txs: ChainTx[];
+  payment_transactions: PaymentTransaction[];
+  payment_config: { platform_fee_rate: number; payout_settlement_hours: number };
+}
+
+export interface ChainTx {
+  id: string;
+  action: string;
+  status: "pending" | "confirmed" | "failed";
+  attempts: number;
+  last_error: string | null;
+  tx_hash: string | null;
+  block_number: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export const getTrackingDetail = (orderId: string) => apiFetch<TrackingDetail>(`/api/tracking/${orderId}`);
@@ -1315,6 +1351,185 @@ export const downloadTrackingInvoicePdf = async (orderId: string, filenameHint?:
   const a = document.createElement("a");
   a.href = url;
   a.download = filenameHint ? `${filenameHint}.pdf` : `invoice-${orderId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PAYMENTS (PKR only) — payment methods, ledger, escrow -> capture -> payout
+// ═══════════════════════════════════════════════════════════════════════════════
+export type PaymentStatus = "Not Required" | "Payment Required" | "Authorized" | "Captured" | "Cancelled" | "Failed";
+export type PayoutStatus = "Not Scheduled" | "Scheduled" | "Awaiting Transfer" | "Paid" | "Failed" | "Not Applicable";
+export type PaymentMethodType = "bank_transfer" | "raast" | "jazzcash" | "easypaisa";
+
+export interface PaymentsConfig {
+  currency: "PKR";
+  platform_fee_rate: number;
+  payout_settlement_hours: number;
+  method_types: { value: PaymentMethodType; label: string }[];
+  has_default_method: boolean;
+  /** mock = simulated; manual = admin makes the Raast/IBFT transfer and records its bank reference */
+  provider: "mock" | "manual";
+  provider_label: string;
+  automatic_payouts: boolean;
+  /** Per-order ceiling in PKR, or null for no cap */
+  max_order_total: number | null;
+}
+
+export interface PaymentMethod {
+  id: string;
+  method_type: PaymentMethodType;
+  method_type_label: string;
+  label: string;
+  account_title: string;
+  bank_name: string | null;
+  account_identifier: string; // masked
+  currency: "PKR";
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface PaymentMethodInput {
+  method_type: PaymentMethodType;
+  label: string;
+  account_title: string;
+  bank_name?: string;
+  account_identifier: string;
+  is_default?: boolean;
+}
+
+export interface PaymentsSummary {
+  held_in_escrow: number;
+  held_count: number;
+  awaiting_method: number;
+  awaiting_method_count: number;
+  payouts_pending: number;
+  payouts_pending_count: number;
+  awaiting_transfer_count: number;
+  paid_out: number;
+  paid_out_count: number;
+  fees_collected: number;
+  failed_count: number;
+  currency: "PKR";
+}
+
+export interface PaymentLedgerRow {
+  id: string;
+  order_code: string;
+  status: string;
+  contract_status: string;
+  chain_order_id: string | null;
+  chain_network: string | null;
+  payment_status: PaymentStatus;
+  payment_ref: string | null;
+  payout_status: PayoutStatus;
+  payout_ref: string | null;
+  subtotal: number;
+  platform_fee: number;
+  total_amount: number;
+  vendor_payout_amount: number | null;
+  currency: "PKR";
+  payment_authorized_at: string | null;
+  payment_captured_at: string | null;
+  payout_due_at: string | null;
+  payout_paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+  vendor_name: string;
+  vendor_bank_name: string | null;
+  vendor_bank_iban: string | null; // masked
+  vendor_payment_terms: string | null;
+  orderer_name: string;
+  payment_method_label: string | null;
+  chain_pending: number;
+  chain_confirmed: number;
+}
+
+export interface PaymentTransaction {
+  id: string;
+  kind: "authorize" | "capture" | "cancel" | "payout";
+  amount: number;
+  currency: "PKR";
+  status: "Succeeded" | "Failed" | "Skipped";
+  provider_ref: string | null;
+  note: string | null;
+  created_at: string;
+  payment_method_label?: string | null;
+  actor_name?: string | null;
+}
+
+export const getPaymentsConfig = () => apiFetch<PaymentsConfig>("/api/payments/config");
+
+export const listPaymentMethods = () => apiFetch<{ methods: PaymentMethod[] }>("/api/payments/methods");
+
+export const createPaymentMethod = (payload: PaymentMethodInput) =>
+  apiFetch<{ id: string; message: string }>("/api/payments/methods", { method: "POST", body: JSON.stringify(payload) });
+
+export const setDefaultPaymentMethod = (id: string) =>
+  apiFetch<{ message: string }>(`/api/payments/methods/${id}/default`, { method: "POST" });
+
+export const removePaymentMethod = (id: string) =>
+  apiFetch<{ message: string }>(`/api/payments/methods/${id}`, { method: "DELETE" });
+
+export const getPaymentsSummary = () => apiFetch<PaymentsSummary>("/api/payments/summary");
+
+export const getPaymentsLedger = (params?: { payment_status?: string; payout_status?: string; search?: string }) => {
+  const q = new URLSearchParams();
+  if (params?.payment_status) q.set("payment_status", params.payment_status);
+  if (params?.payout_status) q.set("payout_status", params.payout_status);
+  if (params?.search) q.set("search", params.search);
+  return apiFetch<{ orders: PaymentLedgerRow[] }>(`/api/payments/ledger?${q.toString()}`);
+};
+
+export const getOrderPaymentTransactions = (orderId: string) =>
+  apiFetch<{ transactions: PaymentTransaction[] }>(`/api/payments/orders/${orderId}/transactions`);
+
+export const authorizeOrderPayment = (orderId: string) =>
+  apiFetch<{ message: string }>(`/api/payments/orders/${orderId}/authorize`, { method: "POST" });
+
+export const retryOrderCapture = (orderId: string) =>
+  apiFetch<{ message: string }>(`/api/payments/orders/${orderId}/capture`, { method: "POST" });
+
+export const releaseVendorPayout = (orderId: string) =>
+  apiFetch<{ message: string }>(`/api/payments/orders/${orderId}/release-payout`, { method: "POST" });
+
+// --- Manual bank transfers (PAYMENT_PROVIDER=manual) -------------------------
+
+export interface PendingTransfer {
+  id: string;
+  order_code: string;
+  amount: number;
+  subtotal: number;
+  vendor_name: string;
+  bank_name: string | null;
+  bank_account_title: string | null;
+  bank_iban: string | null; // full — admin-only endpoint
+  transfer_reference: string;
+  payment_captured_at: string | null;
+  payout_due_at: string | null;
+}
+
+export const getPendingTransfers = () =>
+  apiFetch<{ transfers: PendingTransfer[]; total: number }>("/api/payments/payouts/pending-transfers");
+
+export const confirmManualPayout = (orderId: string, bankReference: string, note?: string) =>
+  apiFetch<{ message: string }>(`/api/payments/orders/${orderId}/confirm-payout`, {
+    method: "POST",
+    body: JSON.stringify({ bank_reference: bankReference, note }),
+  });
+
+export const downloadPendingTransfersCsv = async () => {
+  const token = typeof window !== "undefined" ? localStorage.getItem("nexus_token") : null;
+  const res = await fetch(`${API_BASE_URL}/api/payments/payouts/pending-transfers.csv`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Failed to export transfers (${res.status})`);
+  const url = window.URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `nexus-vendor-payouts-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   a.remove();

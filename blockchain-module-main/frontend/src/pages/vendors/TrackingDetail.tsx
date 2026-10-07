@@ -9,13 +9,14 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
   Loader2, CheckCircle2, XCircle, Clock, AlertTriangle, Truck, MapPin,
-  FileText, Download, Package, ShieldCheck, Mail, RefreshCw, Ban,
+  FileText, Download, Package, ShieldCheck, Mail, RefreshCw, Ban, Wallet, Link2,
 } from "lucide-react";
 import {
   getTrackingDetail, confirmArrival, approveReceipt, raiseDispute, resolveDispute,
-  resendVendorOrderRequest, cancelVendorOrder, staffShipmentCheckpoint, downloadTrackingInvoicePdf,
+  resendVendorOrderRequest, cancelVendorOrder, cancelVendorContract, staffShipmentCheckpoint, downloadTrackingInvoicePdf,
   subscribeToNotifications, TrackingDetail as TrackingDetailType,
 } from "@/services/api";
+import { formatPKR } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -118,6 +119,44 @@ const ProgressBar = ({ order }: { order: TrackingDetailType["order"] }) => {
 
 const ACTOR_LABELS: Record<string, string> = { vendor_link: "Vendor", staff: "Staff", receiver: "You", system: "System" };
 
+const CHAIN_ACTION_LABELS: Record<string, string> = {
+  create_contract: "Contract created", record_checkpoint: "Checkpoint", confirm_arrival: "Arrival confirmed",
+  approve_receipt: "Receipt approved → executed", dispute: "Dispute opened", resolve_dispute: "Dispute resolved", cancel: "Contract cancelled",
+};
+
+/** Plain-language "where is the money and what happens next". */
+function paymentNarrative(order: TrackingDetailType["order"], settlementHours: number): { headline: string; detail: string; tone: string } {
+  const payout = formatPKR(order.vendor_payout_amount ?? order.subtotal);
+  const when = settlementHours === 0 ? "immediately" : `${settlementHours}h`;
+  if (order.status === "PENDING_VENDOR")
+    return { headline: "Not charged yet", detail: "Funds are held only once the vendor accepts.", tone: "text-muted-foreground" };
+  if (["REJECTED", "EXPIRED", "CANCELLED"].includes(order.status) || order.payment_status === "Cancelled")
+    return { headline: "No payment", detail: "Nothing was captured — any hold has been released.", tone: "text-muted-foreground" };
+  if (order.payment_status === "Payment Required")
+    return { headline: "Waiting for a payment method", detail: "An admin must add a default payment method under Payments before receipt can be approved.", tone: "text-warning" };
+  if (order.payment_status === "Failed")
+    return { headline: "Payment failed", detail: "An admin can retry it from Payments.", tone: "text-destructive" };
+  if (order.payment_status === "Authorized")
+    return {
+      headline: "Held in escrow",
+      detail: order.contract_status === "Disputed"
+        ? "Frozen while the dispute is open."
+        : `Captured when you approve receipt after delivery; the vendor is then paid ${payout} ${when} later.`,
+      tone: "text-primary",
+    };
+  if (order.payout_status === "Paid")
+    return { headline: "Vendor paid", detail: `${payout} transferred ${order.payout_paid_at ? new Date(order.payout_paid_at).toLocaleString() : ""}${order.payout_ref ? ` · ref ${order.payout_ref}` : ""}`, tone: "text-success" };
+  if (order.payout_status === "Awaiting Transfer")
+    return { headline: "Captured — bank transfer to vendor in progress", detail: `An admin is sending ${payout} to the vendor by Raast/IBFT; it's marked paid once the bank reference is recorded.`, tone: "text-warning" };
+  if (order.payout_status === "Failed")
+    return { headline: "Captured — vendor payout failed", detail: "An admin can retry the payout from Payments.", tone: "text-destructive" };
+  return {
+    headline: "Captured — vendor payout scheduled",
+    detail: `${payout} will be paid to the vendor ${order.payout_due_at ? `on ${new Date(order.payout_due_at).toLocaleString()}` : "shortly"}.`,
+    tone: "text-warning",
+  };
+}
+
 const TrackingDetail = () => {
   const { orderId } = useParams<{ orderId: string }>();
   const { user } = useAuth();
@@ -132,6 +171,8 @@ const TrackingDetail = () => {
   const [showApproveModal, setShowApproveModal] = useState(false);
   const [showResolveModal, setShowResolveModal] = useState(false);
   const [showStaffCheckpoint, setShowStaffCheckpoint] = useState(false);
+  const [showCancelContract, setShowCancelContract] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
   const [staffLocation, setStaffLocation] = useState("");
   const [staffNote, setStaffNote] = useState("");
   const [staffStatus, setStaffStatus] = useState<"InTransit" | "OutForDelivery">("InTransit");
@@ -167,7 +208,10 @@ const TrackingDetail = () => {
     return <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-primary" size={36} /></div>;
   }
 
-  const { order, items, shipment, events, chain_live_state } = detail;
+  const { order, items, shipment, events, chain_live_state, chain_txs = [], payment_config } = detail;
+  const settlementHours = payment_config?.payout_settlement_hours ?? 24;
+  const narrative = paymentNarrative(order, settlementHours);
+  const IN_FLIGHT = ["Preparing", "Dispatched", "InTransit", "OutForDelivery"];
   const isOrderer = order.is_orderer;
   const isAdmin = user?.role === "admin";
 
@@ -205,7 +249,7 @@ const TrackingDetail = () => {
         <ProgressBar order={order} />
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-4">
+      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* Order card */}
         <div className="glass-card p-5 space-y-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1"><Package size={13} /> Order</p>
@@ -217,8 +261,13 @@ const TrackingDetail = () => {
               </div>
             ))}
           </div>
-          <div className="border-t border-border pt-2 flex justify-between font-semibold">
-            <span>Total</span><span className="font-mono text-primary">{order.currency} {order.total_amount.toLocaleString()}</span>
+          <div className="border-t border-border pt-2 space-y-1 text-sm">
+            <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span className="font-mono">{formatPKR(order.subtotal)}</span></div>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Platform fee{payment_config ? ` (${(payment_config.platform_fee_rate * 100).toFixed(1)}%)` : ""}</span>
+              <span className="font-mono">{formatPKR(order.platform_fee ?? 0)}</span>
+            </div>
+            <div className="flex justify-between font-semibold"><span>Total</span><span className="font-mono text-primary">{formatPKR(order.total_amount)}</span></div>
           </div>
           <p className="text-xs text-muted-foreground">Destination: {order.destination_name}{order.destination_city ? `, ${order.destination_city}` : ""}</p>
         </div>
@@ -236,9 +285,20 @@ const TrackingDetail = () => {
           ) : (
             <p className="text-sm text-muted-foreground">Not yet created — vendor hasn't accepted.</p>
           )}
-          <p className="text-xs pt-2 border-t border-border">
-            Payment: <span className="font-medium">{order.payment_status === "Authorized" ? "Funds authorized — held until you approve receipt" : order.payment_status === "Captured" ? "Payment captured" : order.payment_status}</span>
-          </p>
+        </div>
+
+        {/* Payment card */}
+        <div className="glass-card p-5 space-y-3">
+          <p className="text-xs font-semibold text-muted-foreground uppercase flex items-center gap-1"><Wallet size={13} /> Payment</p>
+          <div>
+            <p className={`text-sm font-semibold ${narrative.tone}`}>{narrative.headline}</p>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{narrative.detail}</p>
+          </div>
+          <div className="text-xs text-muted-foreground space-y-1 border-t border-border pt-2">
+            <p className="flex justify-between"><span>Escrow</span><span className="font-medium text-foreground">{order.payment_status}</span></p>
+            <p className="flex justify-between"><span>Vendor payout</span><span className="font-mono">{formatPKR(order.vendor_payout_amount ?? order.subtotal)}</span></p>
+            <p className="flex justify-between"><span>Payout status</span><span className="font-medium text-foreground">{order.payout_status}</span></p>
+          </div>
         </div>
 
         {/* Contract panel */}
@@ -257,6 +317,20 @@ const TrackingDetail = () => {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Created once the vendor accepts.</p>
+          )}
+          {chain_txs.length > 0 && (
+            <div className="border-t border-border pt-2 space-y-1">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center gap-1"><Link2 size={11} /> On-chain transactions</p>
+              {chain_txs.map((t) => (
+                <div key={t.id} className="flex items-center gap-2 text-[11px]">
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${t.status === "confirmed" ? "bg-success" : t.status === "pending" ? "bg-warning" : "bg-destructive"}`} />
+                  <span className="flex-1 truncate">{CHAIN_ACTION_LABELS[t.action] || t.action}</span>
+                  <span className={t.status === "confirmed" ? "text-success" : "text-warning"} title={t.last_error || undefined}>
+                    {t.status === "confirmed" ? `block ${t.block_number}` : `pending (${t.attempts} tries)`}
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
           {order.contract_status === "Executed" && (
             <button
@@ -314,6 +388,31 @@ const TrackingDetail = () => {
               <AlertTriangle size={15} /> Raise Dispute
             </button>
           </div>
+        </div>
+      )}
+
+      {isAdmin && order.status === "ACCEPTED" && IN_FLIGHT.includes(order.contract_status) && (
+        <div className="glass-card p-5 space-y-3">
+          {!showCancelContract ? (
+            <button onClick={() => setShowCancelContract(true)} className="text-sm font-medium text-destructive flex items-center gap-1.5">
+              <Ban size={14} /> Cancel this contract (admin) — releases the payment hold
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">Cancels the escrow contract on-chain and releases the held funds. Only possible before arrival.</p>
+              <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Reason (required)" className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
+              <div className="flex gap-2">
+                <button onClick={() => { setShowCancelContract(false); setCancelReason(""); }} className="text-sm px-4 py-2 rounded-lg border border-border">Back</button>
+                <button
+                  onClick={async () => { await run(() => cancelVendorContract(order.id, cancelReason)); setShowCancelContract(false); setCancelReason(""); }}
+                  disabled={acting || !cancelReason.trim()}
+                  className="text-sm font-medium px-4 py-2 rounded-lg bg-destructive text-white disabled:opacity-50"
+                >
+                  Cancel contract
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -378,8 +477,13 @@ const TrackingDetail = () => {
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Approve Receipt?</h3>
             <p className="text-sm text-muted-foreground">
-              This executes the smart contract and captures payment of {order.currency} {order.total_amount.toLocaleString()}.
+              This executes the smart contract on-chain and captures the {formatPKR(order.total_amount)} held in escrow.
+              The vendor is then paid {formatPKR(order.vendor_payout_amount ?? order.subtotal)}{" "}
+              {settlementHours === 0 ? "immediately" : `${settlementHours} hours later`}. This can't be undone.
             </p>
+            {order.payment_status !== "Authorized" && (
+              <p className="text-sm text-warning">Funds aren't held for this order yet — approval will fail until an admin sets a default payment method.</p>
+            )}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowApproveModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
               <button
@@ -425,7 +529,7 @@ const TrackingDetail = () => {
                   onClick={async () => { setShowResolveModal(false); await run(() => resolveDispute(order.id, r)); }}
                   className="text-sm font-medium px-4 py-2 rounded-lg border border-border hover:bg-muted/30 text-left"
                 >
-                  {r === "Arrived" ? "Back to Arrived (vendor to re-deliver/clarify)" : r === "Cancelled" ? "Cancel order (release payment hold)" : "Force Executed (capture payment anyway)"}
+                  {r === "Arrived" ? "Back to Arrived (vendor to re-deliver/clarify)" : r === "Cancelled" ? "Cancel order (release payment hold)" : "Execute (capture payment, schedule vendor payout)"}
                 </button>
               ))}
             </div>

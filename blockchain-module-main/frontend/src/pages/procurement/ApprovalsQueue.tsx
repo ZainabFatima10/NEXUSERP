@@ -5,6 +5,7 @@ import {
   listPendingApprovals, approveReorder, rejectReorder, ProcurementOrder,
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import { formatPKR } from "@/lib/currency";
 
 const ApprovalsQueue = () => {
   const { toast } = useToast();
@@ -97,7 +98,7 @@ const ApprovalsQueue = () => {
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 Vendor: {o.vendor_name} · Expected delivery {o.expected_delivery} ·{" "}
-                {o.total_price != null ? `USD ${o.total_price.toLocaleString()}` : "Pricing pending"}
+                {o.total_price != null ? formatPKR(o.total_price) : "Pricing pending"}
               </p>
               {o.contract_hash && (
                 <p className="text-[10px] font-mono text-muted-foreground mt-1 truncate">

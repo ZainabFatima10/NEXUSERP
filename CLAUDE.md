@@ -30,6 +30,8 @@ NEXUSERP/
 │   │   │   email_service.py, notification_service.py, sales.py, n8n_service.py
 │   │   ├── vendors.py, vendor_catalogue_parser.py   # vendor registration/vetting (Phase 1)
 │   │   ├── vendor_orders.py, shipment_chain_service.py, payment_mock_service.py   # Phase 2
+│   │   ├── payments.py            # PKR payment methods, ledger, escrow -> capture -> vendor payout
+│   │   ├── payment_providers.py   # PAYMENT_PROVIDER: mock | manual (real Raast/IBFT transfers recorded by admin)
 │   │   ├── taxonomy.py, stt_service.py, tts_service.py, llm_service.py,
 │   │   │   vema_orchestrator.py, reminder_scheduler.py, complaints.py
 │   │   ├── models/                # XGBoost training scripts + models/saved/*.pkl (gitignored)
@@ -62,6 +64,8 @@ NEXUSERP/
   "Known gotchas" below).
 - **`invoice_service.py`** — ReportLab PDF generation + billing math
   (`generate_invoice_data`, `generate_invoice_pdf`). Call, don't edit.
+  (Its currency label was switched from USD to PKR on request — the math
+  is unchanged.)
   `generate_invoice_data` is hardcoded to one line item (matches
   `procurement_orders`); `vendor_orders.py` builds the same-shaped dict
   itself for multi-item orders and calls `generate_invoice_pdf` directly
@@ -93,7 +97,7 @@ migration must be idempotent and safe to re-run. Patterns already in use:
 (`sql.split(";")`) — **never put a literal `;` inside a SQL comment**, it
 will be treated as a statement boundary and crash the next startup.
 
-Next new migration should be `013_*.sql`.
+Next new migration should be `015_*.sql`.
 
 ## Known gotchas (found via live-testing against a real Postgres instance — worth re-checking if you touch nearby code)
 
