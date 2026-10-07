@@ -6,6 +6,7 @@ import {
 import { getInvoice, downloadInvoicePdf, Invoice } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { LogoMark } from "@/components/Logo";
+import { formatPKR } from "@/lib/currency";
 
 interface Props {
   orderId: string;
@@ -15,7 +16,7 @@ interface Props {
 }
 
 const money = (v: number | null | undefined) =>
-  v == null ? "Pending" : `USD ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  v == null ? "Pending" : formatPKR(v);
 
 const InvoiceModal = ({ orderId, onClose, successNote }: Props) => {
   const { toast } = useToast();

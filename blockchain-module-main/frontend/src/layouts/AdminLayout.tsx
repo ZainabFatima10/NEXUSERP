@@ -9,6 +9,13 @@ import { useSidebarBadges } from "@/hooks/use-sidebar-badges";
 const TITLES: Record<string, string> = {
   "/admin": "Dashboard",
   "/admin/inventory": "Inventory Management",
+  "/admin/demand-prediction": "Demand Prediction",
+  "/admin/procurement": "Procurement",
+  "/admin/vendor-applications": "Vendor Applications",
+  "/admin/vendor-catalogue": "Vendor Catalogue",
+  "/admin/place-order": "Place Vendor Order",
+  "/admin/tracking": "Order Tracking",
+  "/admin/payments": "Payments",
   "/admin/outage-prediction": "Outage Prediction",
   "/admin/complaints": "User Complaints",
   "/admin/categories": "Complaint Categories",

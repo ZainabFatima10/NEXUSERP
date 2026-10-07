@@ -110,9 +110,14 @@ const VendorRespond = () => {
                     ))}
                   </tbody>
                 </table>
-                <p className="text-right text-white font-semibold mb-6">
-                  Total: {order.currency} {order.total_amount.toLocaleString()}
-                </p>
+                <div className="text-right mb-6 space-y-1">
+                  <p className="text-white font-semibold">
+                    You will be paid: PKR {(order.vendor_payout_amount ?? order.subtotal).toLocaleString("en-PK", { minimumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-xs text-white/50">
+                    Funds are held in escrow when you accept and transferred to your registered IBAN after the buyer confirms delivery.
+                  </p>
+                </div>
 
                 <div className="flex gap-2 mb-5">
                   <button

@@ -29,6 +29,7 @@ import VendorCatalogue from "@/pages/vendors/VendorCatalogue";
 import PlaceVendorOrder from "@/pages/vendors/PlaceVendorOrder";
 import TrackingList from "@/pages/vendors/TrackingList";
 import TrackingDetail from "@/pages/vendors/TrackingDetail";
+import Payments from "@/pages/Payments";
 
 import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
 import ApprovalsQueue from "@/pages/procurement/ApprovalsQueue";
@@ -63,6 +64,7 @@ function App() {
                 <Route path="place-order" element={<PlaceVendorOrder />} />
                 <Route path="tracking" element={<TrackingList />} />
                 <Route path="tracking/:orderId" element={<TrackingDetail />} />
+                <Route path="payments" element={<Payments />} />
                 <Route path="outage-prediction" element={<OutagePrediction />} />
                 <Route path="complaints" element={<Complaints />} />
                 <Route path="categories" element={<CategoryReference />} />

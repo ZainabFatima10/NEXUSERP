@@ -2,8 +2,9 @@
 NEXUS ERP — Vendor Orders (Phase 2)
 Order -> vendor accept (n8n, no vendor login) -> real on-chain smart
 contract (ShipmentEscrow via shipment_chain_service.py) -> shipment
-tracking -> orderer approval/dispute -> execution -> (mocked) payment
-capture -> invoice.
+tracking -> orderer approval/dispute -> execution -> payment capture ->
+scheduled vendor payout -> invoice. All money is PKR; the payment
+lifecycle itself lives in payments.py.
 
 Entirely new tables/routes — procurement_orders / procurement.py (the
 original low-stock auto-reorder flow) are untouched. "Receiver" always
@@ -32,11 +33,10 @@ from notification_engine import notify, auto_resolve
 from n8n_service import (
     trigger_vendor_order_email,
     trigger_vendor_order_shipment_link_email,
-    trigger_vendor_order_payment_released_email,
     trigger_vendor_order_status_checkin_email,
 )
 import shipment_chain_service as chain
-import payment_mock_service as payments
+import payments
 from invoice_service import generate_invoice_pdf
 
 router = APIRouter(tags=["Vendor Orders"])
@@ -181,8 +181,8 @@ def _invoice_data(order: dict, items: List[dict]) -> dict:
     unchanged — only this data-shaping step is new, because the input
     shape genuinely differs."""
     subtotal = float(order["subtotal"])
-    fee_rate = 0.005
-    fee = round(subtotal * fee_rate, 2)
+    fee_rate = payments.PLATFORM_FEE_RATE
+    fee = float(order.get("platform_fee") or 0)
     total = float(order["total_amount"])
     return {
         "invoice_number": "INV-" + order["order_code"].replace("VO-", ""),
@@ -210,7 +210,7 @@ def _invoice_data(order: dict, items: List[dict]) -> dict:
         "tax_rate": 0.0,
         "tax": 0.0,
         "total": total,
-        "currency": order.get("currency", "PKR"),
+        "currency": "PKR",
         "contract_hash": order.get("chain_order_id"),
         "contract_status": order.get("contract_status"),
         "expected_delivery": str(order.get("requested_delivery_date")) if order.get("requested_delivery_date") else None,
@@ -266,6 +266,8 @@ def place_vendor_order(req: PlaceOrderRequest, user: dict = Depends(get_current_
             "line_total": line_total,
         })
 
+    amounts = payments.compute_order_amounts(subtotal)
+    payments.check_order_cap(amounts["total_amount"])
     order_id = str(uuid.uuid4())
     order_code = "VO-" + uuid.uuid4().hex[:6].upper()
     expires_at = datetime.now(timezone.utc) + timedelta(hours=VENDOR_ORDER_RESPONSE_HOURS)
@@ -275,19 +277,20 @@ def place_vendor_order(req: PlaceOrderRequest, user: dict = Depends(get_current_
             INSERT INTO vendor_orders (
               id, order_code, vendor_id, orderer_user_id,
               destination_name, destination_city, destination_address,
-              requested_delivery_date, subtotal, total_amount, currency,
+              requested_delivery_date, subtotal, platform_fee, total_amount, vendor_payout_amount, currency,
               status, expires_at
             ) VALUES (
               :id, :code, :vendor_id, :orderer_id,
               :dest_name, :dest_city, :dest_address,
-              :delivery_date, :subtotal, :total, 'PKR',
+              :delivery_date, :subtotal, :fee, :total, :payout, 'PKR',
               'PENDING_VENDOR', :expires_at
             )
         """),
         {
             "id": order_id, "code": order_code, "vendor_id": req.vendor_id, "orderer_id": user["id"],
             "dest_name": req.destination_name, "dest_city": req.destination_city, "dest_address": req.destination_address,
-            "delivery_date": req.requested_delivery_date, "subtotal": round(subtotal, 2), "total": round(subtotal, 2),
+            "delivery_date": req.requested_delivery_date, "subtotal": amounts["subtotal"], "fee": amounts["platform_fee"],
+            "total": amounts["total_amount"], "payout": amounts["vendor_payout_amount"],
             "expires_at": expires_at,
         },
     )
@@ -325,7 +328,7 @@ def place_vendor_order(req: PlaceOrderRequest, user: dict = Depends(get_current_
     notify(
         db, "order.placed", {"orderer_user_id": user["id"]},
         title=f"Order Placed — {order_code}",
-        body=f"Order {order_code} ({vendor['name']}) sent for vendor confirmation. "
+        body=f"Order {order_code} ({vendor['name']}, PKR {amounts['total_amount']:,.2f}) sent for vendor confirmation. "
              f"Expires {expires_at.strftime('%Y-%m-%d %H:%M')} UTC.",
         entity_type="vendor_order", entity_id=order_id, action_path=f"/tracking/{order_id}",
         metadata={"order_id": order_id, "order_code": order_code},
@@ -333,7 +336,7 @@ def place_vendor_order(req: PlaceOrderRequest, user: dict = Depends(get_current_
     db.commit()
 
     return {
-        "order_id": order_id, "order_code": order_code, "status": "PENDING_VENDOR",
+        "order_id": order_id, "order_code": order_code, "status": "PENDING_VENDOR", **amounts,
         "vendor_email_status": n8n_result["status"],
         "message": f"Order {order_code} placed. Vendor notified, awaiting their response.",
     }
@@ -370,6 +373,8 @@ def public_get_vendor_order(order_id: str, token: str = Query(...), db: Session 
         "destination_name": order["destination_name"], "destination_city": order["destination_city"],
         "requested_delivery_date": order["requested_delivery_date"], "status": order["status"],
         "subtotal": float(order["subtotal"]), "total_amount": float(order["total_amount"]),
+        "platform_fee": float(order["platform_fee"] or 0),
+        "vendor_payout_amount": float(order["vendor_payout_amount"] or order["subtotal"]),
         "currency": order["currency"], "expires_at": order["expires_at"],
         "already_responded": order["status"] != "PENDING_VENDOR",
         "items": [{"name": i["name"], "unit": i["unit"], "quantity": float(i["quantity"]),
@@ -413,7 +418,7 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
         db.execute(
             text("""
                 UPDATE vendor_orders SET status = 'REJECTED', vendor_rejection_reason = :reason,
-                  vendor_responded_at = NOW(), updated_at = NOW()
+                  payout_status = 'Not Applicable', vendor_responded_at = NOW(), updated_at = NOW()
                 WHERE id = :id
             """),
             {"reason": req.reason, "id": req.order_id},
@@ -433,14 +438,18 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
     destination = _destination_string(order)
     terms_summary = _order_terms_summary(items)
     receiver_address = chain.get_or_create_user_wallet(db, order["orderer_user_id"])
-    amount_smallest_unit = int(round(float(order["total_amount"]) * 100))  # PKR -> paisa, informational on-chain
+    amount_paisa = payments.to_paisa(order["total_amount"])  # PKR -> paisa, informational on-chain
+
+    # Hold the funds first, so the escrow contract is created already
+    # bound to this payment (its paymentRef is the hash of payment_ref).
+    payment_result = payments.authorize_for_order(db, req.order_id)
+    db.commit()
 
     chain_result = chain.create_contract(
         db, req.order_id, order["order_code"], receiver_address,
-        order["vendor_id"], destination, terms_summary, amount_smallest_unit,
+        order["vendor_id"], destination, terms_summary, amount_paisa,
+        payment_ref=payment_result.get("payment_ref"),
     )
-
-    payment_result = payments.authorize_order_payment(order["order_code"], float(order["total_amount"]), order["currency"])
 
     db.execute(
         text("""
@@ -449,7 +458,6 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
               chain_order_id = :chain_order_id, chain_network = :network,
               destination_hash = :dest_hash, order_hash = :order_hash,
               contract_status = 'Preparing',
-              payment_status = :payment_status, payment_ref = :payment_ref,
               next_status_checkin_due = NOW() + (:checkin_hours * INTERVAL '1 hour'),
               updated_at = NOW()
             WHERE id = :id
@@ -457,7 +465,6 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
         {
             "chain_order_id": chain_result.get("chain_order_id"), "network": chain.CHAIN_NETWORK,
             "dest_hash": chain_result.get("destination_hash"), "order_hash": chain_result.get("order_hash"),
-            "payment_status": payment_result["status"], "payment_ref": payment_result["payment_ref"],
             "checkin_hours": VENDOR_STATUS_CHECKIN_INTERVAL_HOURS,
             "id": req.order_id,
         },
@@ -468,7 +475,9 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
     )
     _insert_event(
         db, req.order_id, "Preparing", "system",
-        note="Vendor accepted — smart contract created, payment authorized.",
+        note="Vendor accepted — smart contract created, "
+             + ("payment authorized and held in escrow." if payment_result["status"] == "Authorized"
+                else "payment NOT yet authorized (no default payment method)."),
         chain_result=chain_result,
     )
     db.commit()
@@ -494,7 +503,9 @@ def public_respond_vendor_order(req: VendorRespondRequest, db: Session = Depends
         db, "order.vendor_accepted", {"orderer_user_id": order["orderer_user_id"]},
         title=f"Vendor Accepted — {order['order_code']}",
         body=f"{order['vendor_name']} accepted order {order['order_code']}. Smart contract created; "
-             f"payment authorized and held until you approve receipt.",
+             + (f"PKR {float(order['total_amount']):,.2f} authorized and held until you approve receipt."
+                if payment_result["status"] == "Authorized"
+                else "payment is waiting on an admin to add a payment method."),
         entity_type="vendor_order", entity_id=req.order_id, action_path=f"/tracking/{req.order_id}",
         metadata={"order_id": req.order_id},
     )
@@ -646,6 +657,20 @@ def get_chain_status():
 # ORDERER-ONLY — confirm arrival, approve receipt, dispute
 # ════════════════════════════════════════════════════════════════════════════
 
+def _payout_message(order: dict) -> str:
+    if order["payment_status"] != "Captured":
+        return (f"Receipt approved and contract executed, but payment capture failed "
+                f"({order['payment_status']}) — an admin can retry it from Payments.")
+    payout = float(order["vendor_payout_amount"] or order["subtotal"])
+    if order["payout_status"] == "Paid":
+        return f"Receipt approved. Contract executed, PKR {payout:,.2f} paid to {order['vendor_name']}."
+    if order["payout_status"] == "Awaiting Transfer":
+        return (f"Receipt approved. Contract executed — an admin will now transfer PKR {payout:,.2f} to "
+                f"{order['vendor_name']}.")
+    return (f"Receipt approved. Contract executed and payment captured — PKR {payout:,.2f} will be paid to "
+            f"{order['vendor_name']} within {payments.PAYOUT_SETTLEMENT_HOURS}h.")
+
+
 def _is_order_owner(order: dict, user: dict) -> bool:
     # order["orderer_user_id"] comes back from pg8000 as a uuid.UUID object;
     # user["id"] is always a str (JWT claims are string-encoded) — compare
@@ -694,37 +719,41 @@ def approve_receipt_endpoint(order_id: str, user: dict = Depends(get_current_use
     if order["contract_status"] != "Arrived":
         raise HTTPException(400, f"Order has not been confirmed as arrived (currently {order['contract_status']})")
 
-    chain_result = chain.approve_receipt(db, order_id, order["order_code"], user["id"])
-    payment_result = payments.capture_order_payment(order["order_code"], order["payment_ref"])
+    # Funds must be held before the contract executes — executing an
+    # escrow contract nobody can pay for would be irreversible on-chain.
+    if order["payment_status"] != "Authorized":
+        auth = payments.authorize_for_order(db, order_id, actor_user_id=user["id"])
+        db.commit()
+        if auth["status"] != "Authorized":
+            raise HTTPException(409, "Payment for this order is not authorized — an admin needs to add a default "
+                                     "payment method under Payments before receipt can be approved.")
 
-    db.execute(
-        text("""
-            UPDATE vendor_orders SET contract_status='Executed', payment_status=:ps, updated_at=NOW()
-            WHERE id=:id
-        """),
-        {"ps": payment_result["status"], "id": order_id},
-    )
-    _insert_event(db, order_id, "Executed", "receiver", note="Receipt approved — contract executed, payment captured.",
+    chain_result = chain.approve_receipt(db, order_id, order["order_code"], user["id"])
+    db.execute(text("UPDATE vendor_orders SET contract_status='Executed', updated_at=NOW() WHERE id=:id"), {"id": order_id})
+    payment_result = payments.capture_for_order(db, order_id, actor_user_id=user["id"])
+    _insert_event(db, order_id, "Executed", "receiver",
+                  note="Receipt approved — contract executed, "
+                       + ("payment captured, vendor payout scheduled." if payment_result["status"] == "Captured"
+                          else f"payment capture FAILED ({payment_result.get('error') or payment_result['status']})."),
                   actor_user_id=user["id"], actor_label=user["name"], chain_result=chain_result)
     db.commit()
 
-    order = _get_order(db, order_id)
-    items = _get_items(db, order_id)
-    try:
-        trigger_vendor_order_payment_released_email(order)
-    except Exception as e:
-        print(f"[WARN] payment-released email failed: {e}")
+    if payment_result["status"] == "Captured" and payments.PAYOUT_SETTLEMENT_HOURS == 0:
+        payments.release_payout(db, order_id)
+        db.commit()
 
+    order = _get_order(db, order_id)
     auto_resolve(db, "vendor_order", order_id, user_id=user["id"])
     notify(
         db, "contract.executed", {"orderer_user_id": order["orderer_user_id"]},
         title=f"Executed — {order['order_code']}",
-        body=f"{order['order_code']} receipt approved — contract executed, payment captured. Invoice available.",
+        body=f"{order['order_code']} receipt approved — contract executed, PKR {float(order['total_amount']):,.2f} "
+             f"captured. Invoice available.",
         entity_type="vendor_order", entity_id=order_id, action_path=f"/tracking/{order_id}",
         metadata={"order_id": order_id},
     )
     db.commit()
-    return {"message": "Receipt approved. Contract executed, payment captured.", "chain": chain_result}
+    return {"message": _payout_message(order), "chain": chain_result}
 
 
 class DisputeRequest(BaseModel):
@@ -777,28 +806,33 @@ def resolve_dispute_endpoint(order_id: str, req: ResolveDisputeRequest, user: di
     if req.resolution not in ("Arrived", "Cancelled", "Executed"):
         raise HTTPException(400, "resolution must be 'Arrived', 'Cancelled' or 'Executed'")
 
-    chain_result = chain.resolve_dispute(db, order_id, order["order_code"], req.resolution)
+    if req.resolution == "Executed" and order["payment_status"] != "Authorized":
+        auth = payments.authorize_for_order(db, order_id, actor_user_id=user["id"])
+        db.commit()
+        if auth["status"] != "Authorized":
+            raise HTTPException(409, "Payment is not authorized — add a default payment method under Payments first.")
 
-    payment_status = order["payment_status"]
-    if req.resolution == "Cancelled":
-        pr = payments.cancel_order_payment(order["order_code"], order["payment_ref"])
-        payment_status = pr["status"]
-    elif req.resolution == "Executed":
-        pr = payments.capture_order_payment(order["order_code"], order["payment_ref"])
-        payment_status = pr["status"]
+    chain_result = chain.resolve_dispute(db, order_id, order["order_code"], req.resolution)
 
     db.execute(
         text("""
-            UPDATE vendor_orders SET contract_status=:status, payment_status=:ps,
+            UPDATE vendor_orders SET contract_status=:status,
               dispute_resolved_at=NOW(), dispute_resolution=:resolution, dispute_resolution_notes=:notes,
               updated_at=NOW()
             WHERE id=:id
         """),
-        {"status": req.resolution, "ps": payment_status, "resolution": req.resolution, "notes": req.notes, "id": order_id},
+        {"status": req.resolution, "resolution": req.resolution, "notes": req.notes, "id": order_id},
     )
+    if req.resolution == "Cancelled":
+        payments.cancel_for_order(db, order_id, actor_user_id=user["id"], note="Dispute resolved: cancelled")
+    elif req.resolution == "Executed":
+        payments.capture_for_order(db, order_id, actor_user_id=user["id"])
     _insert_event(db, order_id, req.resolution, "staff", note=req.notes or f"Dispute resolved: {req.resolution}",
                   actor_user_id=user["id"], actor_label=user["name"], chain_result=chain_result)
     db.commit()
+    if req.resolution == "Executed" and payments.PAYOUT_SETTLEMENT_HOURS == 0:
+        payments.release_payout(db, order_id, actor_user_id=user["id"])
+        db.commit()
 
     notify(
         db, "dispute.resolved", {"orderer_user_id": order["orderer_user_id"]},
@@ -937,6 +971,17 @@ def tracking_detail(order_id: str, user: dict = Depends(get_current_user), db: S
     shipment = _get_shipment(db, order_id)
     events = _get_events(db, order_id)
     chain_live_state = chain.get_state(order["order_code"])
+    chain_txs = db.execute(
+        text("""
+            SELECT id, action, status, attempts, last_error, tx_hash, block_number, created_at, updated_at
+            FROM chain_tx_queue WHERE order_id = :id ORDER BY created_at ASC
+        """),
+        {"id": order_id},
+    ).mappings().all()
+    payment_txs = db.execute(
+        text("SELECT id, kind, amount, currency, status, provider_ref, note, created_at FROM payment_transactions WHERE order_id = :id ORDER BY created_at ASC"),
+        {"id": order_id},
+    ).mappings().all()
 
     return {
         "order": {**order, "action_needed": _action_needed(order), "delayed": _is_delayed(order, shipment),
@@ -945,6 +990,10 @@ def tracking_detail(order_id: str, user: dict = Depends(get_current_user), db: S
         "shipment": shipment,
         "events": events,
         "chain_live_state": chain_live_state,
+        "chain_txs": [dict(r) for r in chain_txs],
+        "payment_transactions": [{**dict(r), "amount": float(r["amount"])} for r in payment_txs],
+        "payment_config": {"platform_fee_rate": payments.PLATFORM_FEE_RATE,
+                           "payout_settlement_hours": payments.PAYOUT_SETTLEMENT_HOURS},
     }
 
 
@@ -1005,11 +1054,56 @@ def cancel_vendor_order(order_id: str, user: dict = Depends(get_current_user), d
 
     db.execute(text("UPDATE vendor_order_tokens SET revoked_at = NOW() WHERE order_id=:id AND used_at IS NULL"), {"id": order_id})
     db.execute(
-        text("UPDATE vendor_orders SET status='CANCELLED', cancelled_at=NOW(), cancelled_by=:uid, updated_at=NOW() WHERE id=:id"),
+        text("""
+            UPDATE vendor_orders SET status='CANCELLED', payout_status='Not Applicable',
+              cancelled_at=NOW(), cancelled_by=:uid, updated_at=NOW()
+            WHERE id=:id
+        """),
         {"uid": user["id"], "id": order_id},
     )
     db.commit()
     return {"message": f"Order {order['order_code']} cancelled."}
+
+
+class CancelContractRequest(BaseModel):
+    reason: str
+
+
+@router.post("/api/vendor-orders/{order_id}/cancel-contract", dependencies=[Depends(require_role(ROLE_ADMIN))])
+def cancel_vendor_contract(order_id: str, req: CancelContractRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Admin-only: cancel an accepted order whose goods have not arrived yet
+    (ShipmentEscrow.cancel() is blocked on-chain once Arrived — after that
+    only the dispute path can cancel). Releases the payment hold."""
+    order = _get_order(db, order_id)
+    if order["status"] != "ACCEPTED" or order["contract_status"] not in SHIPPABLE_CONTRACT_STATUSES:
+        raise HTTPException(400, f"Only an in-flight contract can be cancelled (currently {order['contract_status']})")
+    if not req.reason or not req.reason.strip():
+        raise HTTPException(400, "A reason is required")
+
+    chain_result = chain.cancel(db, order_id, order["order_code"])
+    db.execute(text("UPDATE vendor_order_tokens SET revoked_at = NOW() WHERE order_id=:id AND revoked_at IS NULL"), {"id": order_id})
+    db.execute(
+        text("""
+            UPDATE vendor_orders SET contract_status='Cancelled', next_status_checkin_due=NULL,
+              cancelled_at=NOW(), cancelled_by=:uid, updated_at=NOW()
+            WHERE id=:id
+        """),
+        {"uid": user["id"], "id": order_id},
+    )
+    db.execute(text("UPDATE shipments SET status='Cancelled', updated_at=NOW() WHERE order_id=:id"), {"id": order_id})
+    payments.cancel_for_order(db, order_id, actor_user_id=user["id"], note=req.reason)
+    _insert_event(db, order_id, "Cancelled", "staff", note=req.reason, actor_user_id=user["id"],
+                  actor_label=user["name"], chain_result=chain_result)
+    auto_resolve(db, "vendor_order", order_id)
+    notify(
+        db, "contract.cancelled", {"orderer_user_id": order["orderer_user_id"]},
+        title=f"Contract Cancelled — {order['order_code']}",
+        body=f"An admin cancelled {order['order_code']}: {req.reason}. Any payment hold has been released.",
+        entity_type="vendor_order", entity_id=order_id, action_path=f"/tracking/{order_id}",
+        metadata={"order_id": order_id},
+    )
+    db.commit()
+    return {"message": f"Contract for {order['order_code']} cancelled, payment hold released.", "chain": chain_result}
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1031,7 +1125,7 @@ def check_vendor_order_expiry(db: Session) -> int:
     for row in rows:
         order = dict(row)
         db.execute(text("UPDATE vendor_order_tokens SET revoked_at = NOW() WHERE order_id=:id AND used_at IS NULL"), {"id": order["id"]})
-        db.execute(text("UPDATE vendor_orders SET status='EXPIRED', updated_at=NOW() WHERE id=:id"), {"id": order["id"]})
+        db.execute(text("UPDATE vendor_orders SET status='EXPIRED', payout_status='Not Applicable', updated_at=NOW() WHERE id=:id"), {"id": order["id"]})
         notify(
             db, "order.expired", {"orderer_user_id": order["orderer_user_id"]},
             title=f"Vendor Didn't Respond — {order['order_code']}",

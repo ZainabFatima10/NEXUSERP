@@ -18,6 +18,8 @@ import httpx
 from dotenv import load_dotenv
 from fastapi.encoders import jsonable_encoder
 
+import email_service
+
 load_dotenv()
 
 N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
@@ -144,6 +146,11 @@ def trigger_contract_confirmation_email(
 
 # ─────────────────────────────────────────────────────────────────────────
 # Phase 2 — vendor_orders (order -> accept/reject -> contract -> shipment)
+#
+# Routed through direct SMTP (email_service.py), not n8n — n8n isn't running
+# in this deployment. The n8n workflow JSONs under n8n-workflows/ and the
+# N8N_VENDOR_ORDER_*_WEBHOOK_URL env vars are left in place; switching back
+# just means restoring the _post_webhook(...) call in each function below.
 # ─────────────────────────────────────────────────────────────────────────
 
 def trigger_vendor_order_email(
@@ -153,31 +160,15 @@ def trigger_vendor_order_email(
     reject_url: str,
     expires_at: str,
 ) -> dict:
-    """POST the new-order payload to n8n — itemized bill + Accept/Reject,
-    for an order placed against the vendor's own catalogue (vendor_items),
-    distinct from the Phase 1 low-stock auto-reorder flow above."""
-    payload = jsonable_encoder({
-        "order_id":    order["id"],
-        "order_code":  order["order_code"],
-        "vendor_name": order["vendor_name"],
-        "vendor_email": order["vendor_email"],
-        "destination": order["destination_name"],
-        "requested_delivery_date": str(order["requested_delivery_date"]) if order.get("requested_delivery_date") else None,
-        "items": items,
-        "subtotal": float(order["subtotal"]),
-        "total_amount": float(order["total_amount"]),
-        "currency": order["currency"],
-        "expires_at": str(expires_at),
-        "accept_url": accept_url,
-        "reject_url": reject_url,
-    })
-    dev_message = (
-        f"\n[DEV MODE — n8n not configured] Would POST vendor order email for "
-        f"{order['order_code']} to {order['vendor_email']}\n"
-        f"  Accept: {accept_url}\n"
-        f"  Reject: {reject_url}\n"
+    """New order against the vendor's own catalogue (vendor_items) —
+    itemized bill + Accept/Reject, no login needed."""
+    ok = email_service.send_vendor_order_placed_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"],
+        order["destination_name"], items, float(order["subtotal"]),
+        float(order["total_amount"]), order["currency"], str(expires_at),
+        accept_url, reject_url,
     )
-    return _post_webhook(N8N_VENDOR_ORDER_WEBHOOK_URL, payload, dev_message=dev_message)
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}
 
 
 def trigger_vendor_order_shipment_link_email(
@@ -186,19 +177,10 @@ def trigger_vendor_order_shipment_link_email(
 ) -> dict:
     """Sent right after the vendor accepts — gives them the no-login link
     to report Dispatched / In Transit / Out for Delivery updates."""
-    payload = jsonable_encoder({
-        "order_id":    order["id"],
-        "order_code":  order["order_code"],
-        "vendor_name": order["vendor_name"],
-        "vendor_email": order["vendor_email"],
-        "shipment_update_url": shipment_update_url,
-    })
-    dev_message = (
-        f"\n[DEV MODE — n8n not configured] Would POST shipment-link email for "
-        f"{order['order_code']} to {order['vendor_email']}\n"
-        f"  Shipment update link: {shipment_update_url}\n"
+    ok = email_service.send_vendor_order_shipment_link_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"], shipment_update_url,
     )
-    return _post_webhook(N8N_VENDOR_ORDER_SHIPMENT_LINK_WEBHOOK_URL, payload, dev_message=dev_message)
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}
 
 
 def trigger_vendor_order_status_checkin_email(
@@ -210,36 +192,21 @@ def trigger_vendor_order_status_checkin_email(
     check_vendor_status_checkins) — a friendly "what's the status?" nudge
     with a fresh copy of the no-login shipment-update link, reusing the
     same page as the one sent at acceptance."""
-    payload = jsonable_encoder({
-        "order_id":    order["id"],
-        "order_code":  order["order_code"],
-        "vendor_name": order["vendor_name"],
-        "vendor_email": order["vendor_email"],
-        "contract_status": order["contract_status"],
-        "items": items,
-        "shipment_update_url": shipment_update_url,
-    })
-    dev_message = (
-        f"\n[DEV MODE — n8n not configured] Would POST status check-in email for "
-        f"{order['order_code']} to {order['vendor_email']} (currently {order['contract_status']})\n"
-        f"  Shipment update link: {shipment_update_url}\n"
+    ok = email_service.send_vendor_order_status_checkin_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"],
+        order["contract_status"], shipment_update_url,
     )
-    return _post_webhook(N8N_VENDOR_ORDER_STATUS_CHECKIN_WEBHOOK_URL, payload, dev_message=dev_message)
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}
 
 
 def trigger_vendor_order_payment_released_email(order: dict) -> dict:
-    """Sent once the contract executes and the (mocked, Phase 4-real-later)
-    payment is captured — confirms to the vendor that payment is released."""
-    payload = jsonable_encoder({
-        "order_id":    order["id"],
-        "order_code":  order["order_code"],
-        "vendor_name": order["vendor_name"],
-        "vendor_email": order["vendor_email"],
-        "total_amount": float(order["total_amount"]),
-        "currency": order["currency"],
-    })
-    dev_message = (
-        f"\n[DEV MODE — n8n not configured] Would POST payment-released email for "
-        f"{order['order_code']} to {order['vendor_email']}\n"
+    """Sent when the vendor payout is actually made (payments.release_payout
+    — after the contract executes and the settlement window elapses), not
+    at approval time — so the vendor is only ever told money is on its way
+    once it really is. Amount is the vendor's payout (subtotal), in PKR."""
+    ok = email_service.send_vendor_order_payment_released_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"],
+        float(order.get("vendor_payout_amount") or order["subtotal"]), "PKR",
+        payout_ref=order.get("payout_ref"),
     )
-    return _post_webhook(N8N_VENDOR_ORDER_PAYMENT_RELEASED_WEBHOOK_URL, payload, dev_message=dev_message)
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}

@@ -369,12 +369,17 @@ def _attempt(db: Session, order_id: str, action: str, payload: dict, call_fn, qu
 def create_contract(
     db: Session, order_id: str, order_code: str, receiver_address: str,
     vendor_id: str, destination: str, order_terms_summary: str, amount: int,
-    _queue_id: Optional[str] = None,
+    payment_ref: Optional[str] = None, _queue_id: Optional[str] = None,
 ) -> dict:
+    """`amount` is the order total in paisa (PKR x 100). `payment_ref` is
+    the escrow hold's reference from payments.authorize_for_order() — its
+    hash is stored on-chain as paymentRef, binding the contract to the
+    exact funds held for it (zero hash if no hold could be placed)."""
     oid_hash = order_id_hash(order_code)
     payload = {
         "order_code": order_code, "receiver_address": receiver_address, "vendor_id": vendor_id,
         "destination": destination, "order_terms_summary": order_terms_summary, "amount": amount,
+        "payment_ref": payment_ref,
     }
 
     def call():
@@ -382,7 +387,7 @@ def create_contract(
             _contract.functions.createContract(
                 oid_hash, _w3.to_checksum_address(receiver_address), content_hash(vendor_id),
                 content_hash(destination), content_hash(order_terms_summary), int(amount),
-                content_hash(""),  # paymentRef — set once Phase 4 payments land
+                content_hash(payment_ref or ""),
             ),
             _backend_account,
         )
@@ -511,7 +516,8 @@ def get_state(order_code: str) -> Optional[dict]:
 _ACTION_DISPATCH = {
     "create_contract": lambda db, p, qid: create_contract(
         db, p["_order_id"], p["order_code"], p["receiver_address"], p["vendor_id"],
-        p["destination"], p["order_terms_summary"], p["amount"], _queue_id=qid,
+        p["destination"], p["order_terms_summary"], p["amount"],
+        payment_ref=p.get("payment_ref"), _queue_id=qid,
     ),
     "record_checkpoint": lambda db, p, qid: record_checkpoint(
         db, p["_order_id"], p["order_code"], p["new_status"], p["location"], p["note"], p["actor_type"], _queue_id=qid,

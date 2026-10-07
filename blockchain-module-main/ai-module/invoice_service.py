@@ -52,7 +52,7 @@ def generate_invoice_data(order: dict) -> dict:
         "tax_rate": tax_rate,
         "tax": tax,
         "total": total,
-        "currency": "USD",
+        "currency": "PKR",
         "contract_hash": order.get("contract_hash"),
         "contract_status": order.get("contract_status"),
         "expected_delivery": order.get("expected_delivery"),
@@ -96,10 +96,11 @@ def generate_invoice_pdf(invoice: dict) -> bytes:
         story.append(t_party)
         story.append(Spacer(1, 20))
 
+        cur = invoice.get("currency") or "PKR"
         items_data = [[Paragraph("<b>Item Description</b>", bold_style), Paragraph("<b>Qty</b>", bold_style), Paragraph("<b>Unit Price</b>", bold_style), Paragraph("<b>Total</b>", bold_style)]]
         for item in invoice["line_items"]:
-            price_str = f"USD {item['unit_price']:,.2f}" if item["unit_price"] is not None else "Pending"
-            tot_str = f"USD {item['line_total']:,.2f}" if item["line_total"] is not None else "Pending"
+            price_str = f"{cur} {item['unit_price']:,.2f}" if item["unit_price"] is not None else "Pending"
+            tot_str = f"{cur} {item['line_total']:,.2f}" if item["line_total"] is not None else "Pending"
             items_data.append([
                 Paragraph(f"{item['description']}<br/><font size=8 color='#64748B'>SKU: {item['item_id']}</font>", sub_style),
                 Paragraph(f"{item['quantity']} {item['unit']}", sub_style),
@@ -119,13 +120,13 @@ def generate_invoice_pdf(invoice: dict) -> bytes:
         story.append(t_items)
         story.append(Spacer(1, 15))
 
-        sub_val = f"USD {invoice['subtotal']:,.2f}" if invoice["subtotal"] is not None else "Pending"
-        fee_val = f"USD {invoice['blockchain_fee']:,.2f}" if invoice["blockchain_fee"] is not None else "Pending"
-        tot_val = f"USD {invoice['total']:,.2f}" if invoice["total"] is not None else "Pending"
+        sub_val = f"{cur} {invoice['subtotal']:,.2f}" if invoice["subtotal"] is not None else "Pending"
+        fee_val = f"{cur} {invoice['blockchain_fee']:,.2f}" if invoice["blockchain_fee"] is not None else "Pending"
+        tot_val = f"{cur} {invoice['total']:,.2f}" if invoice["total"] is not None else "Pending"
 
         summary_data = [
             ["Subtotal:", sub_val],
-            ["Blockchain Verification Fee (0.5%):", fee_val],
+            [f"Blockchain Verification Fee ({invoice.get('blockchain_fee_rate', 0.005) * 100:g}%):", fee_val],
             ["Total Payable:", tot_val],
         ]
         t_sum = Table(summary_data, colWidths=[380, 160])

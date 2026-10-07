@@ -11,6 +11,7 @@ import {
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatPKR } from "@/lib/currency";
 
 interface Props {
   order: ProcurementOrder;
@@ -140,7 +141,7 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   };
 
   const money = (v: number | null | undefined) =>
-    v == null ? "Pending" : `USD ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    v == null ? "Pending" : formatPKR(v);
 
   const tabs: { key: ModalTab; label: string; icon: React.ElementType }[] = [
     { key: "overview",  label: "Overview",  icon: Package },
@@ -231,8 +232,8 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                 ["Vendor",          order.vendor_name],
                 ["Vendor Email",    order.vendor_email],
                 ["Trigger",         order.trigger_type],
-                ["Unit Price",      order.unit_price ? `USD ${order.unit_price.toLocaleString()}` : "—"],
-                ["Total Price",     order.total_price ? `USD ${order.total_price.toLocaleString()}` : "—"],
+                ["Unit Price",      order.unit_price ? formatPKR(order.unit_price) : "—"],
+                ["Total Price",     order.total_price ? formatPKR(order.total_price) : "—"],
                 ["Expected Delivery", order.expected_delivery],
                 ["Actual Delivery",   order.actual_delivery || "—"],
                 ["Delivery Condition", order.delivery_condition || "—"],

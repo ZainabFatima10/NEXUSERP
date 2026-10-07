@@ -3,18 +3,34 @@ import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { LayoutDashboard, ShoppingCart, Mail, Bell, UserCheck, Store, Truck } from "lucide-react";
-import Sidebar, { NavItem } from "@/components/Sidebar";
+import Sidebar, { NavSection } from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import { useSidebarBadges } from "@/hooks/use-sidebar-badges";
 
-const PM_NAV_ITEMS: NavItem[] = [
-  { to: "/procurement", label: "Dashboard", icon: LayoutDashboard, end: true },
-  { to: "/procurement/approvals", label: "Reorder Approvals", icon: ShoppingCart },
-  { to: "/procurement/vendors", label: "Vendor Communication", icon: Mail },
-  { to: "/procurement/vendor-applications", label: "Vendor Applications", icon: UserCheck },
-  { to: "/procurement/vendor-catalogue", label: "Vendor Catalogue", icon: Store },
-  { to: "/procurement/tracking", label: "Order Tracking", icon: Truck },
-  { to: "/procurement/notifications", label: "Notifications", icon: Bell },
+const PM_NAV_SECTIONS: NavSection[] = [
+  {
+    title: "Overview",
+    items: [{ to: "/procurement", label: "Dashboard", icon: LayoutDashboard, end: true }],
+  },
+  {
+    title: "Procurement",
+    items: [
+      { to: "/procurement/approvals", label: "Reorder Approvals", icon: ShoppingCart },
+      { to: "/procurement/tracking", label: "Order Tracking", icon: Truck },
+      { to: "/procurement/vendors", label: "Vendor Communication", icon: Mail },
+    ],
+  },
+  {
+    title: "Vendors",
+    items: [
+      { to: "/procurement/vendor-applications", label: "Vendor Applications", icon: UserCheck },
+      { to: "/procurement/vendor-catalogue", label: "Vendor Catalogue", icon: Store },
+    ],
+  },
+  {
+    title: "System",
+    items: [{ to: "/procurement/notifications", label: "Notifications", icon: Bell }],
+  },
 ];
 
 const TITLES: Record<string, string> = {
@@ -23,6 +39,7 @@ const TITLES: Record<string, string> = {
   "/procurement/vendors": "Vendor Communication",
   "/procurement/vendor-applications": "Vendor Applications",
   "/procurement/vendor-catalogue": "Vendor Catalogue",
+  "/procurement/place-order": "Place Vendor Order",
   "/procurement/tracking": "Order Tracking",
   "/procurement/notifications": "Notifications",
   "/procurement/notifications/preferences": "Notification Preferences",
@@ -42,7 +59,7 @@ const ProcurementLayout = () => {
         onToggle={() => setCollapsed((c) => !c)}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
-        navItems={PM_NAV_ITEMS}
+        navSections={PM_NAV_SECTIONS}
         brandSubtitle="Procurement Manager"
         badges={badges}
       />
