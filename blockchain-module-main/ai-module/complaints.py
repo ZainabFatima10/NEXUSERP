@@ -123,22 +123,26 @@ class ComplaintPreviewRequest(BaseModel):
 @router.post("/preview", dependencies=[_customer])
 def preview_complaint(req: ComplaintPreviewRequest):
     """
-    Read-only: classifies a draft complaint and suggests at most one
-    clarifying follow-up question if something important seems missing —
-    never creates a ticket, never writes to the DB. Lets the Customer
-    Portal's voice call ask one natural follow-up before filing. Same
+    Read-only: classifies a draft complaint, flags whether it's actually
+    in scope (a genuine complaint about this DISCO's electricity service),
+    and suggests at most one clarifying follow-up question if something
+    important seems missing — never creates a ticket, never writes to the
+    DB. Lets the Customer Portal decline out-of-scope messages and ask one
+    natural follow-up before filing, for both voice and typed chat. Same
     guardrail as the rest of RAG/LLM use in this app: this only ever
     suggests; /voice and /chat (above) remain the sole, deterministic
-    ticket-creation path, unchanged by this endpoint's existence.
-    classify_complaint() folds the follow-up decision into its one call —
-    see its docstring for why (Gemini's free-tier daily quota).
+    ticket-creation path — always willing to file a ticket regardless of
+    in_scope, unchanged by this endpoint's existence. classify_complaint()
+    folds both decisions into its one call — see its docstring for why
+    (Gemini's free-tier daily quota).
     """
     text_content = (req.message or "").strip()
     if not text_content:
         raise HTTPException(400, "Complaint text is empty")
     classification = llm_service.classify_complaint(text_content)
     followup_question = classification.pop("followup_question", None)
-    return {"classification": classification, "followup_question": followup_question}
+    in_scope = classification.pop("in_scope", True)
+    return {"classification": classification, "followup_question": followup_question, "in_scope": in_scope}
 
 
 @router.get("/mine", dependencies=[_customer])

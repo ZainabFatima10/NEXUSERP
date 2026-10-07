@@ -25,29 +25,39 @@ LLM_AVAILABLE = is_available()
 # ---------------------------------------------------------------------------
 
 _CLASSIFY_SYSTEM_PROMPT = f"""You are VEMA, the complaint-intake classifier for a
-Pakistani electricity utility (DISCO). Classify the customer's complaint into
-exactly one category and subtype from this taxonomy, and pick a severity
-(small, medium, or critical). Use the given default severity unless the
-complaint's content clearly warrants a different one (e.g. a "bill not
-received" complaint that also mentions the customer has been disconnected
-should be escalated above its category default).
+Pakistani electricity utility (DISCO). First decide whether the customer's
+message is actually a complaint about THIS DISCO's electricity service —
+billing, meters, power supply/outages, connections, infrastructure hazards,
+customer service experience with this DISCO, fraud/tampering, or payment for
+electricity. Set "in_scope" to true only for those. If it's about something
+else entirely (a different utility or company, an unrelated personal/product
+issue, a vague or nonsensical message, or anything not about this DISCO's
+electricity service), set "in_scope" to false and leave category/subtype/
+severity as null — do not force it into a category just because one exists.
+
+If in_scope is true, classify it into exactly one category and subtype from
+this taxonomy, and pick a severity (small, medium, or critical). Use the
+given default severity unless the complaint's content clearly warrants a
+different one (e.g. a "bill not received" complaint that also mentions the
+customer has been disconnected should be escalated above its category
+default).
 
 Taxonomy (category -> subtypes -> default severity -> details normally needed
 to act on it, "required_fields"):
 {json.dumps(TAXONOMY, indent=2)}
 
-Also decide whether something important from the chosen category's
-required_fields is genuinely missing from what the customer said, AND the
-customer could reasonably be expected to know it right now (e.g. no
+If in_scope is true, also decide whether something important from the chosen
+category's required_fields is genuinely missing from what the customer said,
+AND the customer could reasonably be expected to know it right now (e.g. no
 area/location for an outage, no meter number for a meter fault). If so,
 include ONE short, natural, spoken-friendly follow-up question for the
 single most important missing detail. If the complaint already covers
-enough to act on, follow-up_question must be null — never ask just because
-a field exists in the list.
+enough to act on, or in_scope is false, followup_question must be null —
+never ask just because a field exists in the list.
 
-Respond with ONLY a JSON object: {{"category": "...", "subtype": "...",
-"severity": "small|medium|critical", "summary": "one sentence summary",
-"followup_question": "..." or null}}"""
+Respond with ONLY a JSON object: {{"in_scope": true|false, "category": "..." or
+null, "subtype": "..." or null, "severity": "small|medium|critical" or null,
+"summary": "one sentence summary", "followup_question": "..." or null}}"""
 
 
 # Words too generic to distinguish between subtypes on their own (they show
@@ -80,6 +90,7 @@ def _keyword_classify(text: str) -> dict:
 
     if best_category:
         return {
+            "in_scope": True,
             "category": best_category,
             "subtype": best_subtype,
             "severity": default_severity_for(best_category, best_subtype),
@@ -90,12 +101,24 @@ def _keyword_classify(text: str) -> dict:
         if category.split()[0].lower() in lower:
             subtype = TAXONOMY[category]["subtypes"][0]
             return {
+                "in_scope": True,
                 "category": category,
                 "subtype": subtype,
                 "severity": default_severity_for(category, subtype),
                 "summary": text.strip()[:200],
             }
+    # No keyword signal at all — likely not a genuine electricity-service
+    # complaint. Still return a valid fallback category/subtype (not None):
+    # create_ticket() never refuses to file regardless of in_scope (by
+    # design — see classify_complaint's docstring), so if this somehow
+    # reaches it directly, ticket creation keeps working exactly as it
+    # always has. in_scope=False is purely an advisory signal that
+    # /api/complaints/preview uses to decline politely before ever getting
+    # this far. No reliable way to detect "unrelated" from keywords alone
+    # (unlike the follow-up question), so dev-mode is conservative here —
+    # worth tightening once the real classifier output can be compared.
     return {
+        "in_scope": False,
         "category": "Customer Service",
         "subtype": "complaint not resolved/no response",
         "severity": "medium",
@@ -105,17 +128,19 @@ def _keyword_classify(text: str) -> dict:
 
 def classify_complaint(text: str) -> dict:
     """
-    Returns {category, subtype, severity, summary, followup_question}.
-    followup_question (see taxonomy.required_fields_for) is folded into this
-    same call rather than a second LLM round-trip — Gemini's free tier caps
-    at 20 requests/day per model (confirmed live, see VEMA_RAG.md), so a
-    separate call here would roughly double the quota this one conversation
-    turn costs for zero benefit, since every fact the model needs to decide
-    on a follow-up (the taxonomy's required_fields) is already in this
-    prompt. followup_question is suggest-only — never changes classification
-    or ticket content, and any failure (no provider, rate limit, bad JSON)
-    just means no question gets asked, same fail-open behavior as every
-    other LLM call here.
+    Returns {in_scope, category, subtype, severity, summary, followup_question}.
+    in_scope and followup_question are both folded into this one call rather
+    than extra LLM round-trips — Gemini's free tier caps at 20 requests/day
+    per model (confirmed live, see VEMA_RAG.md), so a separate call for
+    either would add real quota cost for zero benefit, since the model
+    already has everything it needs in this one prompt. Both are
+    suggest-only: category/subtype/severity are ALWAYS a valid taxonomy
+    entry regardless of in_scope, so create_ticket() (which reads these
+    keys directly, no None-handling) never breaks or refuses to file —
+    in_scope is consumed only by /api/complaints/preview, which uses it to
+    decline out-of-scope messages politely before a ticket is ever drafted.
+    Any failure (no provider, rate limit, bad JSON) falls back to the
+    keyword classifier, same as always.
     """
     if not LLM_AVAILABLE:
         result = _keyword_classify(text)
@@ -128,6 +153,16 @@ def classify_complaint(text: str) -> dict:
         result["followup_question"] = None
         return result
 
+    if parsed.get("in_scope") is False:
+        return {
+            "in_scope": False,
+            "category": "Customer Service",
+            "subtype": "complaint not resolved/no response",
+            "severity": "medium",
+            "summary": parsed.get("summary", text.strip()[:200]),
+            "followup_question": None,
+        }
+
     category = parsed.get("category")
     subtype = parsed.get("subtype")
     if category not in TAXONOMY or subtype not in subtypes_for(category):
@@ -138,6 +173,7 @@ def classify_complaint(text: str) -> dict:
 
     followup = parsed.get("followup_question")
     return {
+        "in_scope": True,
         "category": category,
         "subtype": subtype,
         "severity": parsed.get("severity") or default_severity_for(category, subtype),

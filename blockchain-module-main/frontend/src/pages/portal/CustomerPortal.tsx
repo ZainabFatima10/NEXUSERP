@@ -182,6 +182,11 @@ const GOODBYE = [
   "Thanks for reaching out to NEXUS — take care!",
   "Alright, thanks for calling. Have a great day.",
 ];
+const OUT_OF_SCOPE = [
+  "I'm sorry, that's not something I can log here — I can only register complaints about your electricity service.",
+  "That doesn't sound like an electricity service issue, so I'm not able to file it as a complaint. Is there anything related to your power supply, billing, or meter I can help with?",
+  "Sorry, that's outside what I handle — I can only take complaints related to your electricity service.",
+];
 
 // ─── VEMA voice orb — a state-driven avatar shown during a call, replacing
 // the plain status dot with something that actually reads as "alive":
@@ -477,6 +482,17 @@ const CustomerPortal = () => {
         const preview = await previewComplaint(transcript);
         setRouting(false);
         if (!isCurrent()) return;
+
+        if (!preview.in_scope) {
+          // Not an electricity-service complaint at all — decline politely
+          // and keep listening, no draft/confirm/ticket for this turn.
+          const decline = pick(OUT_OF_SCOPE);
+          pushTurn({ id: crypto.randomUUID(), role: "vema", text: decline });
+          await speak(decline);
+          if (!isCurrent()) return;
+          continue;
+        }
+
         if (preview.followup_question) {
           pushTurn({ id: crypto.randomUUID(), role: "vema", text: preview.followup_question });
           await speak(preview.followup_question);
@@ -559,14 +575,24 @@ const CustomerPortal = () => {
           continue;
         }
       } else {
+        // Declined to submit (or the confirm reply was unclear twice) —
+        // VEMA just said "let's try again", so actually give them that:
+        // loop straight back to listening for a fresh attempt. Falling
+        // through to "anything else?" here was a pre-existing bug — that
+        // question only makes sense after a ticket was actually filed,
+        // and asking it here could end the call before the customer ever
+        // got to redo their complaint.
         setDraft(null);
         const msg = pick(TRY_AGAIN_ACK);
         pushTurn({ id: crypto.randomUUID(), role: "vema", text: msg });
         await speak(msg);
+        if (!isCurrent()) return;
+        continue;
       }
       if (!isCurrent()) return;
 
-      // --- ask whether to log another complaint ---
+      // --- ask whether to log another complaint (only reached after an
+      // actual successful submission, above) ---
       const followMsg = pick(ANYTHING_ELSE);
       pushTurn({ id: crypto.randomUUID(), role: "vema", text: followMsg });
       await speak(followMsg);
@@ -630,6 +656,24 @@ const CustomerPortal = () => {
       pushTurn({ id: crypto.randomUUID(), role: "vema", text: directReply });
       return;
     }
+
+    // Reads as a complaint — but check it's actually in scope (an
+    // electricity-service issue) before even opening the review panel.
+    // Any preview failure fails open to the normal draft flow, same
+    // principle as the voice call's equivalent check.
+    try {
+      setRouting(true);
+      const preview = await previewComplaint(text);
+      setRouting(false);
+      if (!preview.in_scope) {
+        pushTurn({ id: crypto.randomUUID(), role: "customer", text });
+        pushTurn({ id: crypto.randomUUID(), role: "vema", text: pick(OUT_OF_SCOPE) });
+        return;
+      }
+    } catch {
+      setRouting(false);
+    }
+
     setDraft({ text, source: "chat" });
   };
 

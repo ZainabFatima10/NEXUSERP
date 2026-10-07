@@ -666,6 +666,7 @@ export const previewComplaint = (message: string) =>
   apiFetch<{
     classification: { category: string; subtype: string; severity: string; summary: string };
     followup_question: string | null;
+    in_scope: boolean;
   }>("/api/complaints/preview", { method: "POST", body: JSON.stringify({ message }) });
 
 /** Withdraw one of your own complaints (only while status is open/auto_resolved). */
