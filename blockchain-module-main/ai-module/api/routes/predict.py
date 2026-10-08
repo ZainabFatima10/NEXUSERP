@@ -52,9 +52,10 @@ class PredictionRequest(BaseModel):
     Epidemic:            int
 
 def get_status(inventory: int, min_thresh: int) -> str:
-    if inventory <= min_thresh * 0.20: return "Critical"
-    elif inventory < min_thresh:       return "Low"
-    else:                              return "OK"
+    # Shared stock-label thresholds (stock_thresholds.py) — label only,
+    # the prediction model itself is untouched.
+    from stock_thresholds import stock_status
+    return stock_status(inventory, min_thresh)
 
 def safe_encode(encoder, value, default=0):
     try:

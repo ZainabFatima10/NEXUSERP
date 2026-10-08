@@ -15,15 +15,13 @@ import { useToast } from "@/hooks/use-toast";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import InvoiceModal from "@/components/InvoiceModal";
 import { formatPKR } from "@/lib/currency";
+import { stockStatus, STOCK_STATUS_BADGE, STOCK_STATUS_BAR, STOCK_RANGES } from "@/lib/stockThresholds";
 
 type SortDir = "asc" | "desc";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
-    OK:         "bg-success/10 text-success",
-    Low:        "bg-warning/10 text-warning",
-    Critical:   "bg-destructive/10 text-destructive",
-    "Out of Stock": "bg-destructive text-destructive-foreground",
+    ...STOCK_STATUS_BADGE,
     Verified:   "bg-success/10 text-success",
     Pending:    "bg-warning/10 text-warning",
     Signed:     "bg-success/10 text-success",
@@ -52,7 +50,7 @@ const TriggerBadge = ({ type }: { type: string }) => {
 };
 
 const StockBar = ({ pct }: { pct: number }) => {
-  const color = pct <= 20 ? "bg-destructive" : pct < 100 ? "bg-warning" : "bg-success";
+  const color = STOCK_STATUS_BAR[stockStatus(pct)];
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 h-1.5 bg-muted/50 rounded-full overflow-hidden">
@@ -196,10 +194,10 @@ const Inventory = () => {
   ];
 
   const banners: Record<string, string> = {
-    overview: "Real-time inventory from PostgreSQL. Critical items (≤20% threshold) auto-trigger VEMA reorders.",
+    overview: `Real-time inventory from PostgreSQL. Stock % of minimum threshold — Critical ${STOCK_RANGES.Critical}, Low ${STOCK_RANGES.Low}, OK ${STOCK_RANGES.OK}. Critical items auto-trigger VEMA reorders (also on server startup).`,
     orders:   "Live procurement orders. Click any order to view contract details, tracking, and check-in history.",
     history:  "Delivered orders with blockchain execution hashes — immutably recorded on Hyperledger Fabric.",
-    reorders: "Items below threshold flagged for reorder. VEMA auto-triggers critical items; Auto-Generated handles Low stock.",
+    reorders: `Items flagged for reorder. VEMA auto-triggers Critical items (${STOCK_RANGES.Critical}); Auto-Generated handles Low stock (${STOCK_RANGES.Low}). Every reorder waits for Admin / Procurement Manager approval.`,
   };
 
   const criticalItems = items.filter((i) => i.status === "Critical");
@@ -245,7 +243,7 @@ const Inventory = () => {
           { label: "OK",           value: summary.ok,          icon: CheckCircle2,  color: "text-success" },
           { label: "Low Stock",    value: summary.low,         icon: AlertTriangle, color: "text-warning" },
           { label: "Critical",     value: summary.critical,    icon: XCircle,       color: "text-destructive" },
-          { label: "Out of Stock", value: summary.out_of_stock, icon: XCircle,       color: "text-destructive" },
+          { label: "Out of Stock (in Critical)", value: summary.out_of_stock, icon: XCircle, color: "text-destructive" },
         ].map((k) => (
           <div key={k.label} className="glass-card p-4 glow-cyan-hover flex flex-col justify-between">
             <div className="flex items-center gap-2 mb-2">

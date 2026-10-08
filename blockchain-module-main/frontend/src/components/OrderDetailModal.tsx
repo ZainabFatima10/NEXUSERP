@@ -13,8 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatPKR } from "@/lib/currency";
 import FieldError from "@/components/FieldError";
-import { validate, isInteger, isNonNegative, errorInputClass } from "@/lib/validation";
+import { validate, isInteger, errorInputClass, receivedQuantityError } from "@/lib/validation";
 
+import ModalPortal from "@/components/ModalPortal";
 interface Props {
   order: ProcurementOrder;
   onClose: () => void;
@@ -52,16 +53,16 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
 
   // Check-in form state
   const [ciStatus, setCiStatus]   = useState("Arrived at Warehouse");
-  const [ciQty, setCiQty]         = useState(order.quantity);
+  const [ciQty, setCiQty]         = useState(String(order.quantity));
+  // Live check (shows as you type): >= 0 and a whole number.
+  const ciQtyError = receivedQuantityError(ciQty) ?? validate(String(ciQty), isInteger());
   const [ciCond, setCiCond]       = useState<"Good" | "Partial" | "Damaged">("Good");
   const [ciLoc, setCiLoc]         = useState("Main Warehouse");
   const [ciNotes, setCiNotes]     = useState("");
   const [ciFinal, setCiFinal]     = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [signing, setSigning]     = useState(false);
-  const [ciQtyError, setCiQtyError] = useState<string | null>(null);
 
-  const vCiQty = () => validate(String(ciQty), isInteger(), isNonNegative("Quantity cannot be negative"));
 
   // Billing
   const [invoice, setInvoice]           = useState<Invoice | null>(null);
@@ -96,15 +97,13 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   };
 
   const handleCheckin = async () => {
-    const err = vCiQty();
-    setCiQtyError(err);
-    if (err) return;
+    if (ciQtyError) return;
     setSubmitting(true);
     try {
       const res = await submitDeliveryCheckin(order.id, {
         location:          ciLoc,
         status:            ciStatus,
-        quantity_received: ciQty,
+        quantity_received: Number(ciQty),
         condition:         ciCond,
         notes:             ciNotes,
         is_final:          ciFinal,
@@ -160,7 +159,7 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   ];
 
   return (
-    <div
+    <ModalPortal><div
       className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
@@ -418,9 +417,11 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Qty Received</label>
                       <input
                         type="number"
+                        min={0}
+                        step="any"
                         value={ciQty}
-                        onChange={(e) => setCiQty(Number(e.target.value))}
-                        onBlur={() => setCiQtyError(vCiQty())}
+                        onChange={(e) => setCiQty(e.target.value)}
+                        aria-invalid={!!ciQtyError}
                         className={`w-full px-3 py-2 text-sm rounded-lg bg-muted/50 border focus:outline-none focus:ring-2 focus:ring-primary/50 ${ciQtyError ? errorInputClass : "border-border"}`}
                       />
                       <FieldError message={ciQtyError} />
@@ -464,8 +465,8 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                   )}
                   <button
                     onClick={handleCheckin}
-                    disabled={submitting}
-                    className="w-full py-2.5 btn-navy font-semibold flex items-center justify-center gap-2"
+                    disabled={submitting || !!ciQtyError}
+                    className="w-full py-2.5 btn-navy font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {submitting && <Loader2 size={14} className="animate-spin" />}
                     {ciFinal ? "Submit Final Check-In" : "Record Check-In Event"}
@@ -556,7 +557,7 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
           )}
         </div>
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

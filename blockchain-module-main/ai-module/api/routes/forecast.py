@@ -73,9 +73,16 @@ def get_seasonal_defaults(month: int) -> dict:
 
 
 def get_risk_level(probability: float) -> str:
-    if probability < 40:   return "Low"
-    elif probability < 70: return "Medium"
-    else:                  return "High"
+    # Classify on the whole percent the UI displays (rounded half up, same as
+    # the frontend's Math.round), so a day shown as "70%" is always Medium
+    # and one shown as "40%" is never Low.
+    #   Low    < 40%        (Green)
+    #   Medium 40% – 70%    (Amber)
+    #   High   71% – 100%   (Red)
+    pct = int(probability + 0.5)
+    if pct < 40:    return "Low"
+    elif pct <= 70: return "Medium"
+    else:           return "High"
 
 def get_zones(risk: str):
     if risk == "High":     return ["G-9", "F-7", "I-8", "E-11"]

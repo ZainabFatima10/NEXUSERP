@@ -234,6 +234,26 @@ The check-ins stop the moment arrival is confirmed
 (`confirm_arrival_endpoint` clears `next_status_checkin_due` outright; the
 job's own `contract_status` filter is the second line of defense).
 
+## Vendor emails on cancel / dispute — always with the reason
+
+Every cancellation or dispute emails the vendor (direct SMTP,
+`email_service.py`, via the `n8n_service.trigger_vendor_order_*` wrappers
+like the other vendor-order emails), quoting the user's reason
+(HTML-escaped), the item list and what happens next:
+
+| Action | Endpoint | Who | Reason | Vendor email |
+|---|---|---|---|---|
+| Cancel Order (awaiting vendor response) | `POST /api/vendor-orders/{id}/cancel` `{reason}` | orderer / staff | required — 400 without it | "Order cancelled" — Accept/Reject link no longer works, nothing ships |
+| Cancel contract (accepted, not yet arrived) | `POST /api/vendor-orders/{id}/cancel-contract` `{reason}` | admin | required | "Order cancelled" — stop any dispatch, arrange return if already shipped |
+| Raise Dispute (after arrival) | `POST /api/shipments/{id}/dispute` `{reason}` | orderer | required | "Dispute raised" — contract frozen, payment on hold pending admin review, reply with evidence |
+
+Both cancel paths store the reason in `vendor_orders.cancellation_reason`
+(migration `018_vendor_order_cancellation_reason.sql`), shown on the
+tracking detail page. Each response includes `vendor_email_status`
+(`Sent` / `Failed`). The email is sent after the DB commit, so an SMTP
+failure never rolls back the cancellation or dispute. The email names the
+orderer (with a mailto link to their email) as the contact for questions.
+
 ## Payments — PKR only (`payments.py`, migration `013_add_payment_methods.sql`)
 
 All money is Pakistani Rupees, enforced by `CHECK (currency = 'PKR')` on

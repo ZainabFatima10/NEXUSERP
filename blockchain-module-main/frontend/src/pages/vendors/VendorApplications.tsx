@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import FieldError from "@/components/FieldError";
 import { validate, required, errorInputClass } from "@/lib/validation";
 
+import ModalPortal from "@/components/ModalPortal";
 const TABS: { key: string; label: string }[] = [
   { key: "pending", label: "Pending" },
   { key: "needs_info", label: "Needs Info" },
@@ -472,7 +473,7 @@ const VendorApplications = () => {
       )}
 
       {showRejectModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Reject Application</h3>
             <textarea
@@ -489,11 +490,11 @@ const VendorApplications = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {showInfoModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Request More Information</h3>
             <textarea
@@ -510,7 +511,7 @@ const VendorApplications = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {showPayoutRejectModal && (

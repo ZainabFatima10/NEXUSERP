@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { ShoppingCart, Clock, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { listOrders, listPendingApprovals, ProcurementOrder } from "@/services/api";
+import { STOCK_RANGES } from "@/lib/stockThresholds";
 
 const StatCard = ({
   label, value, icon: Icon, tone,
@@ -60,8 +61,8 @@ const ProcurementDashboard = () => {
       <div>
         <h1 className="text-2xl font-heading font-bold">Procurement Manager Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Auto-triggered reorders (stock ≤20% of minimum threshold), vendor
-          responses, and order status.
+          Auto-triggered reorders (Critical stock {STOCK_RANGES.Critical}, Low {STOCK_RANGES.Low} of
+          minimum threshold), vendor responses, and order status.
         </p>
       </div>
 

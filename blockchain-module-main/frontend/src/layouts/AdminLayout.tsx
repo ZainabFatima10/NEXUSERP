@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   "/admin/inventory": "Inventory Management",
   "/admin/demand-prediction": "Demand Prediction",
   "/admin/procurement": "Procurement",
+  "/admin/approvals": "Reorder Approvals",
   "/admin/vema-reorders": "VEMA Auto-Reorders",
   "/admin/vendor-applications": "Vendor Applications",
   "/admin/vendor-catalogue": "Vendor Catalogue",

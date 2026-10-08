@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import FieldError from "@/components/FieldError";
 import { validate, required, isEmail, errorInputClass } from "@/lib/validation";
 
+import ModalPortal from "@/components/ModalPortal";
 interface Props {
   onClose: () => void;
   onCreated: () => void;
@@ -80,7 +81,7 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
   const field = "w-full px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50";
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <ModalPortal><div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
         className="glass-card w-full max-w-lg max-h-[85vh] flex flex-col animate-slide-up"
         onClick={(e) => e.stopPropagation()}
@@ -181,7 +182,7 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
           </button>
         </div>
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

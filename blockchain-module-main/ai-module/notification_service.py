@@ -126,7 +126,7 @@ def notify_stock_critical(db: Session, item_name: str, current_stock: float, ite
         title       = f"🔴 Critical Stock — {item_name}",
         description = (
             f"Stock for {item_name} has fallen to {current_stock} units "
-            "(below 20% threshold). VEMA reorder triggered automatically."
+            "(below 21% of its minimum threshold). VEMA reorder triggered automatically."
         ),
         metadata    = {"item_id": item_id},
     )
@@ -139,7 +139,7 @@ def notify_stock_low(db: Session, item_name: str, current_stock: float, item_id:
         title       = f"⚠️ Low Stock — {item_name}",
         description = (
             f"Stock for {item_name} is at {current_stock} units, "
-            "below the minimum threshold. Auto-Generated reorder created."
+            "21–35% of its minimum threshold. Auto-Generated reorder created and awaiting approval."
         ),
         metadata    = {"item_id": item_id},
     )

@@ -10,8 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from database import get_db
+from database import get_db, SessionLocal
 from notification_service import notify_stock_low
+from stock_thresholds import stock_status, STATUS_CRITICAL, STATUS_LOW, STATUS_OK
 from rbac import require_role, ROLE_PROCUREMENT_MANAGER
 
 router = APIRouter(prefix="/api/inventory", tags=["Inventory"])
@@ -23,11 +24,11 @@ _admin_only = Depends(require_role())
 # Helpers
 # ────────────────────────────────────────────────────────────────────────────
 
-def _compute_status(stock: float, min_t: int, crit_t: int) -> str:
-    if stock <= 0:       return "Out of Stock"
-    if stock <= crit_t:  return "Critical"
-    if stock < min_t:    return "Low"
-    return "OK"
+def _compute_status(stock: float, min_t: int, crit_t: int = None) -> str:
+    """Critical < 21% <= Low < 36% <= OK, as a % of min_threshold — see
+    stock_thresholds.py. crit_t is no longer used for labelling (kept so
+    existing callers don't change), only for days_until_critical."""
+    return stock_status(stock, min_t)
 
 
 import joblib, numpy as np, os
@@ -112,7 +113,8 @@ def inventory_overview(db: Session = Depends(get_db)):
         "ok":       sum(1 for x in items if x["status"] == "OK"),
         "low":      sum(1 for x in items if x["status"] == "Low"),
         "critical": sum(1 for x in items if x["status"] == "Critical"),
-        "out_of_stock": sum(1 for x in items if x["status"] == "Out of Stock"),
+        # Subset of "critical" (0% is labelled Critical), shown separately.
+        "out_of_stock": sum(1 for x in items if float(x["current_stock"]) <= 0),
         "predicted_demand": sum(x.get("predicted_demand", 0) for x in items),
     }
     return {"summary": summary, "items": items, "timestamp": datetime.utcnow().isoformat()}
@@ -139,6 +141,72 @@ def get_item(item_id: str, db: Session = Depends(get_db)):
 
 
 # ────────────────────────────────────────────────────────────────────────────
+# Reorder triggering — shared by POST /check and the startup critical-stock run
+# ────────────────────────────────────────────────────────────────────────────
+
+def _inventory_rows(db: Session):
+    return db.execute(
+        text("""
+            SELECT i.*, v.name AS vendor_name, v.email AS vendor_email
+            FROM inventory_items i
+            LEFT JOIN vendors v ON v.id = i.vendor_id
+        """)
+    ).mappings().all()
+
+
+def _open_order_item_ids(db: Session) -> set:
+    """Items that already have an open (non-Delivered) order — never
+    reordered again, so neither a re-scan nor a restart duplicates one."""
+    return set(db.execute(
+        text("""
+            SELECT item_id FROM procurement_orders
+            WHERE stage NOT IN ('Delivered', 'Cancelled')
+        """)
+    ).scalars().all())
+
+
+def _reorder_trigger(item: dict):
+    """(trigger_type, reason) for an enriched item, or (None, None)."""
+    if item["status"] == STATUS_CRITICAL:
+        # Checked first so a Critical item keeps its Critical trigger type
+        # even if the demand heuristic below would also fire.
+        return "VEMA-Triggered", "stock below 21% of min_threshold"
+    if item["current_stock"] < item.get("predicted_demand", 0):
+        return "Auto-Generated (Demand > Stock)", "predicted demand exceeds stock"
+    if item["status"] == STATUS_LOW:
+        return "Auto-Generated", "stock between 21% and 35% of min_threshold"
+    return None, None
+
+
+def _safe_notify(fn, *args, **kwargs):
+    """Notifications never abort a scan."""
+    try:
+        fn(*args, **kwargs)
+    except Exception as e:
+        print(f"[WARN] Reorder notification failed: {e}")
+
+
+def _insert_shortage_notification(db: Session, item: dict):
+    db.execute(text("""
+        INSERT INTO notifications (user_id, category, title, description, created_at)
+        VALUES (NULL, 'Updates', :title, :desc, NOW())
+    """), {
+        "title": f"Predicted Shortage: {item['name']}",
+        "desc":  f"Predicted demand ({item['predicted_demand']} {item.get('unit', 'units')}) exceeds current stock ({item['current_stock']} {item.get('unit', 'units')}). Reorder created and awaiting approval."
+    })
+    db.commit()
+
+
+def _trigger_reorder(db: Session, item: dict, trigger: str, reason: str) -> dict:
+    """Every auto trigger — the smart contract is created immediately, but
+    the vendor is NOT emailed until an Admin / Procurement Manager approves
+    it (both roles are notified). See N8N_AUTOMATION_WIRING.md."""
+    from procurement import create_pending_approval_order
+    return create_pending_approval_order(db, item, trigger_type=trigger, reason=reason,
+                                         pick_lowest_price_vendor=True)
+
+
+# ────────────────────────────────────────────────────────────────────────────
 # POST /check — scan all items and auto-generate orders for Low/Critical
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -148,78 +216,39 @@ def run_inventory_check(
     db: Session = Depends(get_db),
 ):
     """
-    Trigger inventory scan. For each Low/Critical item without an open order,
-    create a procurement order automatically (calls procurement route logic directly).
+    Trigger inventory scan. For each Low/Critical/predicted-shortage item
+    without an open order, create a reorder that waits for Admin /
+    Procurement Manager approval before the vendor is emailed. The order
+    goes to the vendor with the lowest unit price for the item (see
+    procurement.select_lowest_price_vendor).
     """
-    from procurement import create_order, CreateOrderRequest, create_pending_approval_order
+    open_set = _open_order_item_ids(db)
 
-    rows = db.execute(
-        text("""
-            SELECT i.*, v.name AS vendor_name, v.email AS vendor_email
-            FROM inventory_items i
-            LEFT JOIN vendors v ON v.id = i.vendor_id
-        """)
-    ).mappings().all()
+    created, skipped, errors = [], [], []
+    for r in _inventory_rows(db):
+        item_id = r["item_id"]
+        try:
+            item = _enrich_item(dict(r))
+            if item_id in open_set:
+                continue
+            trigger, reason = _reorder_trigger(item)
+            if not trigger:
+                continue
 
-    # Items already having open (non-Delivered) orders
-    open_orders = db.execute(
-        text("""
-            SELECT item_id FROM procurement_orders
-            WHERE stage NOT IN ('Delivered', 'Cancelled')
-        """)
-    ).scalars().all()
-    open_set = set(open_orders)
+            if trigger == "Auto-Generated (Demand > Stock)":
+                _safe_notify(_insert_shortage_notification, db, item)
+            elif trigger == "Auto-Generated":
+                background_tasks.add_task(
+                    _safe_notify, notify_stock_low, db,
+                    item["name"], item["current_stock"], item["item_id"]
+                )
 
-    created = []
-    for r in rows:
-        item = _enrich_item(dict(r))
-        if item["item_id"] in open_set:
-            continue
-        trigger = None
-        if item["status"] in ("Critical", "Out of Stock"):
-            # <=20% of min_threshold always takes the PM-approval path
-            # (Section 3a), even if the demand heuristic below would also fire.
-            trigger = "VEMA-Triggered"
-        elif item["current_stock"] < item.get("predicted_demand", 0):
-            trigger = "Auto-Generated (Demand > Stock)"
-        elif item["status"] == "Low":
-            trigger = "Auto-Generated"
-
-        if not trigger:
-            continue
-
-        # Fire notification
-        if trigger == "Auto-Generated (Demand > Stock)":
-            db.execute(text("""
-                INSERT INTO notifications (user_id, category, title, description, created_at)
-                VALUES (NULL, 'Updates', :title, :desc, NOW())
-            """), {
-                "title": f"Predicted Shortage: {item['name']}",
-                "desc":  f"Predicted demand ({item['predicted_demand']} {item.get('unit', 'units')}) exceeds current stock ({item['current_stock']} {item.get('unit', 'units')}). Auto-generated order placed."
-            })
-            db.commit()
-        elif item["status"] in ("Critical", "Out of Stock"):
-            # <=20% of min_threshold (Section 3a) — smart contract is created
-            # immediately, but the vendor is NOT emailed until a Procurement
-            # Manager approves it. See RBAC_WIRING.md / N8N_AUTOMATION_WIRING.md.
-            result = create_pending_approval_order(db, item)
-            created.append(result)
-            continue
-        else:
-            background_tasks.add_task(
-                notify_stock_low, db,
-                item["name"], item["current_stock"], item["item_id"]
-            )
-
-        result = create_order(
-            CreateOrderRequest(
-                item_id      = item["item_id"],
-                quantity     = item["reorder_quantity"],
-                trigger_type = trigger,
-            ),
-            db,
-        )
-        created.append(result)
+            result = _trigger_reorder(db, item, trigger, reason)
+            (skipped if result.get("skipped") else created).append(result)
+        except Exception as e:
+            db.rollback()
+            print(f"[ERROR] Inventory check failed for {item_id}: {e}")
+            errors.append({"item_id": item_id, "error": str(e)})
 
     # VEMA auto-reorder scan (additive, parallel system — see
     # vema_reorder_service.py). Runs after the existing per-item loop above
@@ -233,11 +262,64 @@ def run_inventory_check(
         print(f"[WARN] inventory_v2: VEMA auto-reorder scan failed ({e})")
 
     return {
-        "message":       f"{len(created)} new orders generated",
+        "message":       f"{len(created)} new orders awaiting approval",
         "new_orders":    created,
+        "skipped":       skipped,
+        "errors":        errors,
         "vema_requests": vema_requests,
         "timestamp":     datetime.utcnow().isoformat(),
     }
+
+
+def reorder_critical_items_on_startup() -> dict:
+    """
+    Run at backend startup (main.py): trigger the same reorder as
+    POST /check, but only for items currently labelled Critical. Items that
+    already have an open order are skipped, so restarting never duplicates
+    an approval. Never raises — one bad item can't stop the rest, and a
+    failure here can't stop the server from booting.
+    """
+    counts = {"critical": 0, "created": 0, "skipped_pending": 0, "skipped_no_vendor": 0, "errors": 0}
+    db = SessionLocal()
+    try:
+        open_set = _open_order_item_ids(db)
+        for r in _inventory_rows(db):
+            item_id = r["item_id"]
+            try:
+                if stock_status(r["current_stock"], r["min_threshold"]) != STATUS_CRITICAL:
+                    continue
+                counts["critical"] += 1
+                if item_id in open_set:
+                    counts["skipped_pending"] += 1
+                    print(f"[Startup reorder] {item_id} skipped — already has an open order")
+                    continue
+                item = _enrich_item(dict(r))
+                result = _trigger_reorder(db, item, "VEMA-Triggered", "stock below 21% of min_threshold (startup check)")
+                if result.get("skipped"):
+                    counts["skipped_no_vendor"] += 1
+                    print(f"[Startup reorder] {item_id} skipped — {result.get('reason')}")
+                else:
+                    counts["created"] += 1
+                    open_set.add(item_id)
+                    print(f"[Startup reorder] {item_id} -> {result['order_code']} awaiting approval ({result.get('vendor_name')})")
+            except Exception as e:
+                db.rollback()
+                counts["errors"] += 1
+                print(f"[ERROR] Startup reorder failed for {item_id}: {e}")
+    except Exception as e:
+        counts["errors"] += 1
+        print(f"[ERROR] Startup reorder check aborted: {e}")
+    finally:
+        db.close()
+
+    print(
+        f"Startup re-order check: {counts['critical']} critical items, "
+        f"{counts['created']} approvals created, "
+        f"{counts['skipped_pending']} skipped (already pending), "
+        f"{counts['skipped_no_vendor']} skipped (no vendor), "
+        f"{counts['errors']} errors"
+    )
+    return counts
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -380,18 +462,19 @@ def get_demand_forecast(date: Optional[str] = None, db: Session = Depends(get_db
         item = dict(r)
         stock = float(item["current_stock"])
         min_t = int(item["min_threshold"])
-        crit_t = int(item["critical_threshold"])
         cat = item.get("category", "Operational")
 
         # Run prediction
         pred_demand = calculate_prediction(cat, stock, min_t)
         total_predicted += pred_demand
 
-        # Compute anticipated status
+        # Compute anticipated status — reorder if the item is Low/Critical
+        # now, or would drop to Critical after the predicted demand.
         post_stock = max(0, stock - pred_demand)
-        st = _compute_status(stock, min_t, crit_t)
-        reorder_needed = (stock <= min_t) or (post_stock <= crit_t)
-        trigger_type = "VEMA-Triggered" if (stock <= crit_t or post_stock <= 0) else "Auto-Generated" if reorder_needed else "None"
+        st = _compute_status(stock, min_t)
+        post_st = _compute_status(post_stock, min_t)
+        reorder_needed = st != STATUS_OK or post_st == STATUS_CRITICAL
+        trigger_type = "VEMA-Triggered" if (st == STATUS_CRITICAL or post_stock <= 0) else "Auto-Generated" if reorder_needed else "None"
         reorder_qty = int(item["reorder_quantity"]) if reorder_needed else 0
 
         items_out.append({

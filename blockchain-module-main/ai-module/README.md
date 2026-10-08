@@ -172,8 +172,8 @@ cloudflared.exe tunnel --url http://localhost:8000
 | Risk Level | Outage Probability | Color |
 |---|---|---|
 | Low | < 40% | 🟢 Green |
-| Medium | 40% – 70% | 🟡 Amber |
-| High | > 70% | 🔴 Red |
+| Medium | 40% – 70% (inclusive) | 🟡 Amber |
+| High | > 70% (71% – 100%) | 🔴 Red |
 
 ---
 

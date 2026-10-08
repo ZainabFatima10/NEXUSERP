@@ -101,7 +101,7 @@ migration must be idempotent and safe to re-run. Patterns already in use:
 (`sql.split(";")`) — **never put a literal `;` inside a SQL comment**, it
 will be treated as a statement boundary and crash the next startup.
 
-Next new migration should be `017_*.sql`.
+Next new migration should be `020_*.sql`.
 
 ## Known gotchas (found via live-testing against a real Postgres instance — worth re-checking if you touch nearby code)
 
@@ -116,11 +116,18 @@ Next new migration should be `017_*.sql`.
    `Asia/Karachi`, UTC+5), silently shifting the stored instant. Compute
    `NOW() + (:n * INTERVAL '1 minute')` server-side instead (see
    `vema_orchestrator._escalate()` / `reminder_scheduler.py`).
-3. `inventory_v2.run_inventory_check()`'s trigger-priority ordering matters:
-   the `<=20%` critical-stock check must come **before** the
+3. Stock labels (Critical < 21%, Low 21–35%, OK >= 36% of `min_threshold`)
+   live in **one place per side**: `ai-module/stock_thresholds.py` and
+   `frontend/src/lib/stockThresholds.ts` (migration 019 holds the SQL copy).
+   On startup, `inventory_v2.reorder_critical_items_on_startup()` reorders
+   every Critical item without an open order (never blocks boot).
+   `inventory_v2.run_inventory_check()`'s trigger-priority ordering matters:
+   the Critical check must come **before** the
    demand-vs-stock heuristic check, or the heuristic (which fires for
    almost every under-threshold item when no trained model is loaded)
-   shadows the Procurement Manager approval path entirely.
+   relabels Critical items as "Demand > Stock" (every trigger now goes
+   through Admin/PM approval, but `below_20pct_trigger` and the
+   Critical badge depend on this ordering).
 4. Frontend: `starlette.testclient`/httpx quirks aside, `localhost` works
    more reliably than `127.0.0.1` for local dev server smoke tests in some
    shells here.
@@ -184,7 +191,7 @@ npx hardhat run scripts/deploy.js --network localhost
 | Topic | Doc |
 |---|---|
 | Roles, JWT, route guards, who can call what | `RBAC_WIRING.md` |
-| Auto-reorder trigger, PM approval, n8n vendor email, accept/reject | `N8N_AUTOMATION_WIRING.md` |
+| Auto-reorder trigger, Admin/PM approval, lowest-price vendor pick, n8n vendor email, accept/reject | `N8N_AUTOMATION_WIRING.md` |
 | Vendor registration, admin vetting, approved vendor catalogue | `VENDOR_ONBOARDING.md` |
 | Order -> accept -> on-chain contract -> ship -> approve -> execute, payment lifecycle | `SHIPMENT_ESCROW.md` |
 | Notification engine, event catalogue, SSE stream, outbox, preferences | `NOTIFICATIONS.md` |

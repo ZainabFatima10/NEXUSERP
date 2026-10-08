@@ -11,7 +11,7 @@ import { listVendors, getVendorItems, placeVendorOrder, getPaymentsConfig, Vendo
 import { formatPKR } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
 import FieldError from "@/components/FieldError";
-import { validate, required, isPositive, errorInputClass } from "@/lib/validation";
+import { validate, required, errorInputClass, orderQuantityError } from "@/lib/validation";
 
 interface LocationState {
   prefillVendorId?: string;
@@ -20,7 +20,7 @@ interface LocationState {
 
 interface OrderRow {
   vendor_item_id: string;
-  quantity: number;
+  quantity: string; // raw input — validated by orderQuantityError
 }
 
 const PlaceVendorOrder = () => {
@@ -43,10 +43,8 @@ const PlaceVendorOrder = () => {
   const [feeRate, setFeeRate] = useState(0.005);
   const [maxOrderTotal, setMaxOrderTotal] = useState<number | null>(null);
   const [destNameError, setDestNameError] = useState<string | null>(null);
-  const [rowQtyErrors, setRowQtyErrors] = useState<Record<number, string | null>>({});
 
   const vDestName = () => validate(destinationName, required("Destination name is required"));
-  const vRowQty = (q: number) => validate(String(q), isPositive("Quantity must be greater than 0"));
 
   useEffect(() => {
     getPaymentsConfig().then((c) => { setFeeRate(c.platform_fee_rate); setMaxOrderTotal(c.max_order_total); }).catch(() => {});
@@ -78,29 +76,28 @@ const PlaceVendorOrder = () => {
 
   useEffect(() => { loadItems(vendorId); setRows([]); }, [vendorId, loadItems]);
 
-  const addRow = () => setRows((r) => [...r, { vendor_item_id: "", quantity: 1 }]);
+  const addRow = () => setRows((r) => [...r, { vendor_item_id: "", quantity: "1" }]);
   const updateRow = (idx: number, patch: Partial<OrderRow>) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   const removeRow = (idx: number) => {
     setRows((r) => r.filter((_, i) => i !== idx));
-    setRowQtyErrors((e) => { const next = { ...e }; delete next[idx]; return next; });
   };
 
   const itemById = (id: string) => items.find((i) => i.id === id);
   const subtotal = rows.reduce((sum, r) => {
     const it = itemById(r.vendor_item_id);
-    return sum + (it ? it.unit_price * r.quantity : 0);
+    return sum + (it && !orderQuantityError(r.quantity) ? it.unit_price * Number(r.quantity) : 0);
   }, 0);
 
   const overCap = maxOrderTotal != null && subtotal * (1 + feeRate) > maxOrderTotal;
-  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && r.quantity > 0) && !overCap;
+  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && !orderQuantityError(r.quantity)) && !overCap;
 
   const handleSubmit = async () => {
     setPlacing(true);
     try {
       const res = await placeVendorOrder({
         vendor_id: vendorId,
-        items: rows.map((r) => ({ vendor_item_id: r.vendor_item_id, quantity: r.quantity })),
+        items: rows.map((r) => ({ vendor_item_id: r.vendor_item_id, quantity: Number(r.quantity) })),
         destination_name: destinationName,
         destination_city: destinationCity || undefined,
         destination_address: destinationAddress || undefined,
@@ -174,6 +171,7 @@ const PlaceVendorOrder = () => {
           <div className="space-y-2">
             {rows.map((row, idx) => {
               const it = itemById(row.vendor_item_id);
+              const qtyError = orderQuantityError(row.quantity);
               return (
                 <div key={idx} className="flex items-start gap-2">
                   <select
@@ -186,15 +184,15 @@ const PlaceVendorOrder = () => {
                   </select>
                   <div className="w-24">
                     <input
-                      type="number" min={0.01} step="any" value={row.quantity}
-                      onChange={(e) => updateRow(idx, { quantity: Number(e.target.value) })}
-                      onBlur={() => setRowQtyErrors((er) => ({ ...er, [idx]: vRowQty(row.quantity) }))}
-                      className={`w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border ${rowQtyErrors[idx] ? errorInputClass : "border-border"}`}
+                      type="number" min={0} step="any" value={row.quantity}
+                      onChange={(e) => updateRow(idx, { quantity: e.target.value })}
+                      aria-invalid={!!qtyError}
+                      className={`w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border ${qtyError ? errorInputClass : "border-border"}`}
                     />
-                    <FieldError message={rowQtyErrors[idx]} />
+                    <FieldError message={qtyError} />
                   </div>
                   <span className="text-sm text-muted-foreground w-28 text-right font-mono pt-2">
-                    {it ? formatPKR(it.unit_price * row.quantity) : "—"}
+                    {it && !qtyError ? formatPKR(it.unit_price * Number(row.quantity)) : "—"}
                   </span>
                   <button onClick={() => removeRow(idx)} className="text-muted-foreground hover:text-destructive pt-2"><Trash2 size={16} /></button>
                 </div>

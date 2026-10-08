@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LogoMark } from "@/components/Logo";
 import { formatPKR } from "@/lib/currency";
 
+import ModalPortal from "@/components/ModalPortal";
 interface Props {
   orderId: string;
   onClose: () => void;
@@ -51,7 +52,7 @@ const InvoiceModal = ({ orderId, onClose, successNote }: Props) => {
   };
 
   return (
-    <div
+    <ModalPortal><div
       className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
@@ -222,7 +223,7 @@ const InvoiceModal = ({ orderId, onClose, successNote }: Props) => {
           </button>
         </div>
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

@@ -69,6 +69,14 @@ def on_startup():
         print(f"[WARN] Schema migration warning: {e}")
     start_scheduler()
 
+    # Re-order every item currently labelled Critical (skips items that
+    # already have an open order). Must never stop the server from booting.
+    try:
+        from inventory_v2 import reorder_critical_items_on_startup
+        reorder_critical_items_on_startup()
+    except Exception as e:
+        print(f"[ERROR] Startup re-order check failed: {e}")
+
 
 @app.on_event("shutdown")
 def on_shutdown():

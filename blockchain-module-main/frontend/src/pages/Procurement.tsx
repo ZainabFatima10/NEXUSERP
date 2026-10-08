@@ -14,7 +14,7 @@ import OrderDetailModal from "@/components/OrderDetailModal";
 import InvoiceModal from "@/components/InvoiceModal";
 import { formatPKR } from "@/lib/currency";
 import FieldError from "@/components/FieldError";
-import { validate, isInteger, isPositive, isNonNegative, errorInputClass } from "@/lib/validation";
+import { validate, isInteger, errorInputClass, orderQuantityError, unitPriceError } from "@/lib/validation";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -91,14 +91,11 @@ const Procurement = () => {
 
   // Place-order form
   const [formItem, setFormItem] = useState("");
-  const [formQty, setFormQty] = useState(100);
+  const [formQty, setFormQty] = useState("100");
   const [formPrice, setFormPrice] = useState("");
   const [placing, setPlacing] = useState(false);
   const [vendorFilter, setVendorFilter] = useState<{ id: string; name: string } | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<{ formQty?: string | null; formPrice?: string | null }>({});
 
-  const vQty = () => validate(String(formQty), isInteger(), isPositive("Quantity must be greater than 0"));
-  const vPrice = () => validate(formPrice, isNonNegative("Price cannot be negative"));
 
   const load = useCallback(async () => {
     try {
@@ -127,7 +124,7 @@ const Procurement = () => {
     const state = location.state as LocationState | null;
     if (state?.prefillItemId) {
       setFormItem(state.prefillItemId);
-      if (state.prefillQty) setFormQty(state.prefillQty);
+      if (state.prefillQty) setFormQty(String(state.prefillQty));
       setTab("place");
     }
     if (state?.prefillVendorId) {
@@ -147,19 +144,19 @@ const Procurement = () => {
 
   const handleRefresh = () => { setRefreshing(true); load(); };
 
+  // Live checks (error shows as you type): > 0, and a whole number.
+  const qtyError = orderQuantityError(formQty) ?? validate(String(formQty), isInteger());
+  const priceError = unitPriceError(formPrice);
+
   const handlePlaceOrder = async () => {
-    if (!formItem) return;
-    const errs = { formQty: vQty(), formPrice: vPrice() };
-    setFieldErrors(errs);
-    if (errs.formQty || errs.formPrice) return;
+    if (!formItem || qtyError || priceError) return;
     setPlacing(true);
     try {
-      const res = await manualReorder(formItem, formQty, formPrice ? Number(formPrice) : undefined);
+      const res = await manualReorder(formItem, Number(formQty), formPrice ? Number(formPrice) : undefined);
       toast({ title: "✅ Blockchain procurement order placed" });
       setFormItem("");
-      setFormQty(100);
+      setFormQty("100");
       setFormPrice("");
-      setFieldErrors({});
       await load();
       if (res?.order_id) setInvoiceOrderId(res.order_id);
       setTab("active");
@@ -183,8 +180,8 @@ const Procurement = () => {
   };
 
   const estimatedTotal =
-    formItem && formQty > 0 && formPrice
-      ? formQty * Number(formPrice)
+    formItem && !qtyError && !priceError && formPrice
+      ? Number(formQty) * Number(formPrice)
       : null;
 
   if (loading) {
@@ -305,12 +302,14 @@ const Procurement = () => {
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Quantity</label>
               <input
                 type="number"
+                min={0}
+                step="any"
                 value={formQty}
-                onChange={(e) => setFormQty(Number(e.target.value))}
-                onBlur={() => setFieldErrors((f) => ({ ...f, formQty: vQty() }))}
-                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${fieldErrors.formQty ? errorInputClass : "border-border"}`}
+                onChange={(e) => setFormQty(e.target.value)}
+                aria-invalid={!!qtyError}
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${qtyError ? errorInputClass : "border-border"}`}
               />
-              <FieldError message={fieldErrors.formQty} />
+              <FieldError message={qtyError} />
             </div>
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">
@@ -318,13 +317,15 @@ const Procurement = () => {
               </label>
               <input
                 type="number"
+                min={0}
+                step="any"
                 value={formPrice}
                 onChange={(e) => setFormPrice(e.target.value)}
-                onBlur={() => setFieldErrors((f) => ({ ...f, formPrice: vPrice() }))}
                 placeholder="Leave blank to omit"
-                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${fieldErrors.formPrice ? errorInputClass : "border-border"}`}
+                aria-invalid={!!priceError}
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${priceError ? errorInputClass : "border-border"}`}
               />
-              <FieldError message={fieldErrors.formPrice} />
+              <FieldError message={priceError} />
               {estimatedTotal != null && (
                 <p className="text-xs text-muted-foreground mt-1.5">
                   Estimated total:{" "}
@@ -337,7 +338,7 @@ const Procurement = () => {
             </div>
             <button
               onClick={handlePlaceOrder}
-              disabled={!formItem || placing}
+              disabled={!formItem || placing || !!qtyError || !!priceError}
               className="w-full py-2.5 font-semibold btn-navy disabled:opacity-50 flex items-center justify-center gap-2"
             >
               {placing && <Loader2 size={16} className="animate-spin" />}

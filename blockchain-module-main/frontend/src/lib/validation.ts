@@ -116,3 +116,37 @@ export const isAlphaOnly = (msg = "Only letters and spaces are allowed"): Valida
 // Shared Tailwind classes for an invalid field's border/ring — append to
 // an input's existing className when it has an error.
 export const errorInputClass = "border-destructive focus:ring-destructive/50";
+
+// ── Order-quantity helpers (inline checks on every order form) ──────────
+// Built from the validators above. The backend enforces the same rules
+// (Pydantic Field(gt=0) / ge=0 in procurement.py and vendor_orders.py).
+
+/** Quantity being ordered: required, a number, greater than zero. */
+export function orderQuantityError(value: number | string): string | null {
+  return validate(
+    value === null || value === undefined ? "" : String(value),
+    required("Quantity is required"),
+    isNumber("Quantity must be a number"),
+    isNonNegative("Quantity cannot be negative"),
+    isPositive("Quantity must be greater than 0"),
+  );
+}
+
+/** Quantity counted on delivery: zero is allowed (nothing usable arrived), negative is not. */
+export function receivedQuantityError(value: number | string): string | null {
+  return validate(
+    value === null || value === undefined ? "" : String(value),
+    required("Quantity is required"),
+    isNumber("Quantity must be a number"),
+    isNonNegative("Quantity cannot be negative"),
+  );
+}
+
+/** Optional unit price: blank is allowed, negative is not. */
+export function unitPriceError(value: number | string): string | null {
+  return validate(
+    value === null || value === undefined ? "" : String(value),
+    isNumber("Unit price must be a number"),
+    isNonNegative("Unit price cannot be negative"),
+  );
+}
