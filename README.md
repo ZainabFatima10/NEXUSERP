@@ -9,11 +9,11 @@
 
 ## Team
 
-| Name | Roll No | Responsibility |
-|---|---|---|
-| Zainab Fatima | 22I-1064 | Blockchain procurement, smart contracts, vendor email, TimescaleDB |
-| Ayesha Tahir | 22i-0480 | AI forecasting, data collection, model training, visualization |
-| Ayesha Imran | 22i-1942 | VEMA voice automation, testing, documentation, React frontend |
+| Name | Roll No |
+|---|---|
+| Zainab Fatima | 22I-1064 |
+| Ayesha Tahir | 22i-0480 |
+| Ayesha Imran | 22i-1942 |
 
 **Supervisors:** Mr. Ahmed Raza, Dr. Noshina Tariq
 
@@ -28,7 +28,7 @@
 | Outage Model ROC-AUC | — | **0.8865** |
 | Demand Model MAE | — | **15 KWh** |
 
-> FYP target accuracy: 85% — both models exceed this threshold ✅
+> FYP target accuracy: 85% — both models exceed this threshold.
 
 ---
 
@@ -160,9 +160,9 @@ cloudflared.exe tunnel --url http://localhost:8000
 
 | Status | Condition | Action |
 |---|---|---|
-| ✅ OK | `stock >= min_threshold` | Routine monitoring |
-| ⚠️ Low | `stock < min_threshold` | Auto-Generated order |
-| 🔴 Critical | `stock <= min_threshold × 20%` | VEMA-Triggered order |
+| OK | `stock >= min_threshold` | Routine monitoring |
+| Low | `stock < min_threshold` | Auto-Generated order |
+| Critical | `stock <= min_threshold × 20%` | VEMA-Triggered order |
 
 ---
 
@@ -170,9 +170,9 @@ cloudflared.exe tunnel --url http://localhost:8000
 
 | Risk Level | Outage Probability | Color |
 |---|---|---|
-| Low | < 40% | 🟢 Green |
-| Medium | 40% – 70% | 🟡 Amber |
-| High | > 70% | 🔴 Red |
+| Low | < 40% | Green |
+| Medium | 40% – 70% | Amber |
+| High | > 70% | Red |
 
 ---
 
@@ -180,82 +180,18 @@ cloudflared.exe tunnel --url http://localhost:8000
 
 | Module | Status | Iteration |
 |---|---|---|
-| AI Outage Forecasting | ✅ Complete | 1 |
-| Inventory Management | ✅ Complete | 1 |
-| Blockchain Procurement (simulated Hyperledger Fabric) | ✅ Complete | 2 |
-| Automated Reordering + Procurement Manager approval + n8n | ✅ Complete | 2 |
-| Role-Based Access Control (Admin / CR / Procurement Manager / Customer) | ✅ Complete | 2 |
-| VEMA Voice/Chat Agent (Whisper + Kokoro + Mistral) | ✅ Complete | 3 |
-| Customer Portal | ✅ Complete | 3 |
-| Notifications | ✅ Complete | 2 |
+| AI Outage Forecasting | Complete | 1 |
+| Inventory Management | Complete | 1 |
+| Blockchain Procurement (simulated Hyperledger Fabric) | Complete | 2 |
+| Automated Reordering + Procurement Manager approval + n8n | Complete | 2 |
+| Role-Based Access Control (Admin / CR / Procurement Manager / Customer) | Complete | 2 |
+| VEMA Voice/Chat Agent (Whisper + Kokoro + Mistral) | Complete | 3 |
+| Customer Portal | Complete | 3 |
+| Notifications | Complete | 2 |
 
 See `RBAC_WIRING.md`, `N8N_AUTOMATION_WIRING.md`, `VEMA_BACKEND_WIRING.md`,
 and `CUSTOMER_PORTAL_WIRING.md` for how each of these is actually wired, and
 `CLAUDE.md` for a full map of the codebase.
-
----
-
-## Test checklist
-
-Assumes the local dev setup from above is running (Postgres + `uvicorn` on
-:8000 + `npm run dev` on :5173).
-
-**Trigger a low-stock reorder locally**
-1. Log in as `admin@nexus.pk` / `nexus2026` → Inventory → **Run Inventory
-   Check**. Items at/below 20% of their minimum threshold (seeded: Copper
-   Conductors, Smart Meters) go to **Pending PM Approval**, not straight to
-   the vendor.
-2. Log in as `procurement@nexus.pk` / `nexus2026` → Procurement Manager
-   Dashboard → **Reorder Approvals** → Approve. Without `N8N_WEBHOOK_URL`
-   set, the backend console prints the vendor email payload including the
-   Accept/Reject URLs (dev mode).
-
-**Simulate a vendor Accept/Reject without live n8n**
-1. From the `uvicorn` console output after the approval above, copy the
-   `accept_url` or `reject_url` (`.../api/procurement/vendor-response/{id}
-   ?decision=...&token=...`).
-2. Paste it into a browser or `curl -X POST <url>` — no login required, it's
-   secured by the per-order token. Accept executes the smart contract and
-   notifies Admin + the Procurement Manager; Reject marks it declined.
-
-**Sign up as a customer and generate one ticket per severity tier**
-1. Go to `/signup` (or click **Customer Portal** on the marketing site) →
-   create an account → lands on `/portal`.
-2. Type each of these as a chat message and send:
-   - *Small*: "I never received my monthly electricity bill this cycle."
-   - *Medium*: "My electricity meter is faulty and not recording usage
-     properly, needs replacement."
-   - *Critical*: "There has been no electricity in my area since this
-     morning, complete outage."
-3. Small auto-resolves immediately. Medium attempts auto-resolution then
-   escalates. Critical escalates immediately with no auto-resolve attempt.
-   All three show up under **Your Tickets** with the right severity badge.
-
-**Log in as each of the three admin-side roles to confirm access boundaries**
-| Account | Password | Lands on | Should NOT be able to reach |
-|---|---|---|---|
-| `admin@nexus.pk` | `nexus2026` | `/admin` | — (full access) |
-| `cr@nexus.pk` | `nexus2026` | `/cr` | `/admin`, `/procurement` (redirects home) |
-| `procurement@nexus.pk` | `nexus2026` | `/procurement` | `/admin`, `/cr` (redirects home) |
-
-Confirm the redirect happens (not just a hidden nav link) by typing the
-disallowed URL directly into the address bar while logged in as CR or
-Procurement Manager.
-
----
-
-## Inventory Items Monitored
-
-| Item | Min Threshold | Unit | Vendor |
-|---|---|---|---|
-| Distribution Transformers (11kV) | 50 | units | Siemens AG |
-| Circuit Breakers (33kV) | 30 | units | ABB Ltd |
-| Power Cables (HT) | 5000 | meters | Nexans |
-| Smart Meters (AMI) | 200 | units | Siemens AG |
-| Surge Arresters | 100 | units | ABB Ltd |
-| Insulators (Porcelain) | 500 | units | NGK Insulators |
-| Relay Protection Units | 40 | units | Schneider |
-| Copper Conductors | 1000 | kg | Prysmian Group |
 
 ---
 
