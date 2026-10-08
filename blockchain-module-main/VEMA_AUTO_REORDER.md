@@ -1,5 +1,16 @@
 # VEMA Auto-Reorders — Stock Scan → Proposal → Approval → Order
 
+> **Disabled (2026-10-08).** The "VEMA Auto-Reorders" tab was removed from
+> the Admin and Procurement Manager sidebars, and nothing creates new
+> proposals any more. The 30-minute scheduled scan (`reminder_scheduler.py`)
+> and admin stock edits (`inventory_v2.update_stock`) now call
+> `inventory_v2.reorder_critical_items()` instead, which creates normal
+> pending orders in **Reorder Approvals** for Critical items without an
+> open order. The backend module, router, tables and the
+> `pages/procurement/VemaReorders.tsx` page file are still in place
+> (unrouted) in case this is brought back. The rest of this doc describes
+> the original design.
+
 A deterministic stock-scan pipeline that proposes a reorder (quantity,
 ranked vendor, plain-English rationale) *before* any order exists, and
 waits for a Procurement Manager or Admin to approve or reject it. Additive

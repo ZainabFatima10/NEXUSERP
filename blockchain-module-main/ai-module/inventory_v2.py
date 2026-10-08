@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from database import get_db, SessionLocal
+from database import get_db, SessionLocal, engine
 from notification_service import notify_stock_low
 from stock_thresholds import stock_status, STATUS_CRITICAL, STATUS_LOW, STATUS_OK
 from rbac import require_role, ROLE_PROCUREMENT_MANAGER
@@ -250,75 +250,117 @@ def run_inventory_check(
             print(f"[ERROR] Inventory check failed for {item_id}: {e}")
             errors.append({"item_id": item_id, "error": str(e)})
 
-    # VEMA auto-reorder scan (additive, parallel system — see
-    # vema_reorder_service.py). Runs after the existing per-item loop above
-    # so it never interferes with it; its own dedup checks procurement_orders
-    # too, so an item this loop just created an order for is skipped.
-    vema_requests = []
-    try:
-        import vema_reorder_service
-        vema_requests = vema_reorder_service.scan_and_create_requests(db)
-    except Exception as e:
-        print(f"[WARN] inventory_v2: VEMA auto-reorder scan failed ({e})")
-
     return {
         "message":       f"{len(created)} new orders awaiting approval",
         "new_orders":    created,
         "skipped":       skipped,
         "errors":        errors,
-        "vema_requests": vema_requests,
         "timestamp":     datetime.utcnow().isoformat(),
     }
 
 
 def reorder_critical_items_on_startup() -> dict:
+    """Run at backend startup (main.py) — see reorder_critical_items()."""
+    return reorder_critical_items("startup")
+
+
+# Serialises reorder_critical_items() across startup, the 30-minute job and
+# stock edits, so two overlapping runs can't each create an approval for the
+# same item. Arbitrary app-wide constant for pg_advisory_lock.
+_CRITICAL_REORDER_LOCK_KEY = 4207001
+
+
+def _critical_reorder_blocker(db: Session, item_id: str) -> Optional[str]:
+    """Why a Critical item should NOT get a new reorder approval, or None.
+
+    Blocks only on an approval already waiting (pm_approval_status='Pending')
+    or an approved reorder still on its way to us. Legacy/manual orders
+    (pm_approval_status='Not Required'), PM-rejected and vendor-rejected
+    orders no longer block, so every Critical item ends up with exactly one
+    live reorder."""
+    row = db.execute(
+        text("""
+            SELECT order_code, pm_approval_status FROM procurement_orders
+            WHERE item_id = :id
+              AND (pm_approval_status = 'Pending'
+                   OR (pm_approval_status = 'Approved'
+                       AND stage NOT IN ('Delivered', 'Cancelled', 'Cancelled by PM', 'Vendor Rejected')))
+            ORDER BY (pm_approval_status = 'Pending') DESC, created_at DESC
+            LIMIT 1
+        """),
+        {"id": item_id},
+    ).mappings().first()
+    if not row:
+        return None
+    if row["pm_approval_status"] == "Pending":
+        return f"approval already waiting ({row['order_code']})"
+    return f"approved reorder still in progress ({row['order_code']})"
+
+
+def reorder_critical_items(source: str = "startup") -> dict:
     """
-    Run at backend startup (main.py): trigger the same reorder as
-    POST /check, but only for items currently labelled Critical. Items that
-    already have an open order are skipped, so restarting never duplicates
-    an approval. Never raises — one bad item can't stop the rest, and a
-    failure here can't stop the server from booting.
+    Trigger a VEMA reorder (same as POST /check) for every item currently
+    labelled Critical, so each lands in Reorder Approvals. Called at
+    startup, every 30 minutes by reminder_scheduler.py, and after an admin
+    stock edit (update_stock). An item is skipped only if it already has an
+    approval waiting or an approved reorder in progress (see
+    _critical_reorder_blocker), so re-running never duplicates an approval.
+    Never raises — one bad item can't stop the rest, and a failure here
+    can't stop the server from booting.
     """
+    tag = source.capitalize()
+    verbose = source == "startup"
     counts = {"critical": 0, "created": 0, "skipped_pending": 0, "skipped_no_vendor": 0, "errors": 0}
+    lock_conn = None
     db = SessionLocal()
     try:
-        open_set = _open_order_item_ids(db)
+        lock_conn = engine.connect()
+        lock_conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _CRITICAL_REORDER_LOCK_KEY})
         for r in _inventory_rows(db):
             item_id = r["item_id"]
             try:
                 if stock_status(r["current_stock"], r["min_threshold"]) != STATUS_CRITICAL:
                     continue
                 counts["critical"] += 1
-                if item_id in open_set:
+                blocker = _critical_reorder_blocker(db, item_id)
+                if blocker:
                     counts["skipped_pending"] += 1
-                    print(f"[Startup reorder] {item_id} skipped — already has an open order")
+                    if verbose:
+                        print(f"[{tag} reorder] {item_id} skipped — {blocker}")
                     continue
                 item = _enrich_item(dict(r))
-                result = _trigger_reorder(db, item, "VEMA-Triggered", "stock below 21% of min_threshold (startup check)")
+                result = _trigger_reorder(db, item, "VEMA-Triggered", f"stock below 21% of min_threshold ({source} check)")
                 if result.get("skipped"):
                     counts["skipped_no_vendor"] += 1
-                    print(f"[Startup reorder] {item_id} skipped — {result.get('reason')}")
+                    print(f"[{tag} reorder] {item_id} skipped — {result.get('reason')}")
                 else:
                     counts["created"] += 1
-                    open_set.add(item_id)
-                    print(f"[Startup reorder] {item_id} -> {result['order_code']} awaiting approval ({result.get('vendor_name')})")
+                    print(f"[{tag} reorder] {item_id} -> {result['order_code']} awaiting approval ({result.get('vendor_name')})")
             except Exception as e:
                 db.rollback()
                 counts["errors"] += 1
-                print(f"[ERROR] Startup reorder failed for {item_id}: {e}")
+                print(f"[ERROR] {tag} reorder failed for {item_id}: {e}")
     except Exception as e:
         counts["errors"] += 1
-        print(f"[ERROR] Startup reorder check aborted: {e}")
+        print(f"[ERROR] {tag} reorder check aborted: {e}")
     finally:
         db.close()
+        if lock_conn is not None:
+            try:
+                lock_conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _CRITICAL_REORDER_LOCK_KEY})
+            except Exception as e:
+                print(f"[WARN] {tag} reorder: advisory unlock failed ({e})")
+            finally:
+                lock_conn.close()
 
-    print(
-        f"Startup re-order check: {counts['critical']} critical items, "
-        f"{counts['created']} approvals created, "
-        f"{counts['skipped_pending']} skipped (already pending), "
-        f"{counts['skipped_no_vendor']} skipped (no vendor), "
-        f"{counts['errors']} errors"
-    )
+    if verbose or counts["created"] or counts["errors"]:
+        print(
+            f"{tag} re-order check: {counts['critical']} critical items, "
+            f"{counts['created']} approvals created, "
+            f"{counts['skipped_pending']} skipped (approval waiting / reorder in progress), "
+            f"{counts['skipped_no_vendor']} skipped (no vendor), "
+            f"{counts['errors']} errors"
+        )
     return counts
 
 
@@ -353,15 +395,13 @@ def update_stock(item_id: str, req: StockUpdateRequest, db: Session = Depends(ge
     )
     db.commit()
 
-    # VEMA auto-reorder scan — see run_inventory_check()'s equivalent hook
-    # for why this is additive/non-blocking. Scans every item (cheap at this
-    # catalogue's size) rather than just this one, since scan_and_create_requests
-    # already does its own per-item dedup/threshold check.
-    try:
-        import vema_reorder_service
-        vema_reorder_service.scan_and_create_requests(db)
-    except Exception as e:
-        print(f"[WARN] inventory_v2: VEMA auto-reorder scan failed ({e})")
+    # A stock edit that drops an item to Critical goes straight to Reorder
+    # Approvals (skips items that already have an open order).
+    if new_status == STATUS_CRITICAL:
+        try:
+            reorder_critical_items("stock-update")
+        except Exception as e:
+            print(f"[WARN] inventory_v2: critical reorder after stock update failed ({e})")
 
     return {"item_id": item_id, "new_stock": req.current_stock, "status": new_status}
 

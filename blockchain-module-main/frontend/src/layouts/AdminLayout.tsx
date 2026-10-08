@@ -12,7 +12,6 @@ const TITLES: Record<string, string> = {
   "/admin/demand-prediction": "Demand Prediction",
   "/admin/procurement": "Procurement",
   "/admin/approvals": "Reorder Approvals",
-  "/admin/vema-reorders": "VEMA Auto-Reorders",
   "/admin/vendor-applications": "Vendor Applications",
   "/admin/vendor-catalogue": "Vendor Catalogue",
   "/admin/place-order": "Place Vendor Order",
@@ -21,7 +20,6 @@ const TITLES: Record<string, string> = {
   "/admin/outage-prediction": "Outage Prediction",
   "/admin/complaints": "User Complaints",
   "/admin/categories": "Complaint Categories",
-  "/admin/knowledge-base": "Knowledge Base",
   "/admin/notifications": "Notifications",
   "/admin/notifications/preferences": "Notification Preferences",
 };
@@ -31,7 +29,7 @@ const AdminLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const title = TITLES[location.pathname] || "NEXUS ERP";
-  const badges = useSidebarBadges("/admin/tracking", "/admin/vendor-applications", "/admin/vema-reorders");
+  const badges = useSidebarBadges("/admin/tracking", "/admin/vendor-applications");
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

@@ -3,8 +3,8 @@ import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, CloudLightning, MessageSquare,
-  Bell, ChevronLeft, ChevronRight, ChevronDown, LogOut, TrendingUp, ShoppingCart, BookOpen, Database,
-  UserCheck, Store, Truck, Wallet, Bot, ClipboardCheck,
+  Bell, ChevronLeft, ChevronRight, ChevronDown, LogOut, TrendingUp, ShoppingCart, BookOpen,
+  UserCheck, Store, Truck, Wallet, ClipboardCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -59,7 +59,6 @@ export const ADMIN_NAV_SECTIONS: NavSection[] = [
       { to: "/admin/inventory", label: "Inventory", icon: Package },
       { to: "/admin/procurement", label: "Procurement", icon: ShoppingCart },
       { to: "/admin/approvals", label: "Reorder Approvals", icon: ClipboardCheck },
-      { to: "/admin/vema-reorders", label: "VEMA Auto-Reorders", icon: Bot },
       { to: "/admin/tracking", label: "Order Tracking", icon: Truck },
     ],
   },
@@ -79,7 +78,6 @@ export const ADMIN_NAV_SECTIONS: NavSection[] = [
     items: [
       { to: "/admin/complaints", label: "User Complaints", icon: MessageSquare },
       { to: "/admin/categories", label: "Complaint Categories", icon: BookOpen },
-      { to: "/admin/knowledge-base", label: "Knowledge Base", icon: Database },
     ],
   },
   {

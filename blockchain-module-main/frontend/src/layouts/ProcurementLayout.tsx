@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { LayoutDashboard, ShoppingCart, Mail, Bell, UserCheck, Store, Truck, Bot } from "lucide-react";
+import { LayoutDashboard, ShoppingCart, Mail, Bell, UserCheck, Store, Truck } from "lucide-react";
 import Sidebar, { NavSection } from "@/components/Sidebar";
 import Topbar from "@/components/Topbar";
 import { useSidebarBadges } from "@/hooks/use-sidebar-badges";
@@ -16,7 +16,6 @@ const PM_NAV_SECTIONS: NavSection[] = [
     title: "Procurement",
     items: [
       { to: "/procurement/approvals", label: "Reorder Approvals", icon: ShoppingCart },
-      { to: "/procurement/vema-reorders", label: "VEMA Auto-Reorders", icon: Bot },
       { to: "/procurement/tracking", label: "Order Tracking", icon: Truck },
       { to: "/procurement/vendors", label: "Vendor Communication", icon: Mail },
     ],
@@ -37,7 +36,6 @@ const PM_NAV_SECTIONS: NavSection[] = [
 const TITLES: Record<string, string> = {
   "/procurement": "Procurement Manager Dashboard",
   "/procurement/approvals": "Reorder Approvals",
-  "/procurement/vema-reorders": "VEMA Auto-Reorders",
   "/procurement/vendors": "Vendor Communication",
   "/procurement/vendor-applications": "Vendor Applications",
   "/procurement/vendor-catalogue": "Vendor Catalogue",
@@ -52,7 +50,7 @@ const ProcurementLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const title = TITLES[location.pathname] || "NEXUS ERP — Procurement";
-  const badges = useSidebarBadges("/procurement/tracking", "/procurement/vendor-applications", "/procurement/vema-reorders");
+  const badges = useSidebarBadges("/procurement/tracking", "/procurement/vendor-applications");
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

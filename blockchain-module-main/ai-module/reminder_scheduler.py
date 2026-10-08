@@ -104,16 +104,15 @@ def _run_chain_retry_job():
 
 
 def _run_vema_reorder_scan():
-    """Periodic trigger (b) for vema_reorder_service — trigger (a) is
-    inventory_v2's own scan/stock-update paths calling it directly. Also
-    expires stale pending requests in the same pass."""
+    """Every 30 minutes: re-order any Critical item without an open order,
+    so it lands in Reorder Approvals between manual inventory checks (the
+    old VEMA Auto-Reorders proposal queue was removed from the UI). Also
+    expires any leftover pending VEMA proposals in the same pass."""
     try:
-        with db_session() as db:
-            created = vema_reorder_service.scan_and_create_requests(db)
-            if created:
-                print(f"[OK] vema_reorder_service: {len(created)} new reorder proposal(s).")
+        from inventory_v2 import reorder_critical_items
+        reorder_critical_items("scheduled")
     except Exception as e:
-        print(f"[WARN] reminder_scheduler: VEMA reorder scan failed: {e}")
+        print(f"[WARN] reminder_scheduler: critical reorder scan failed: {e}")
     try:
         with db_session() as db:
             n = vema_reorder_service.expire_stale_requests(db)
@@ -150,7 +149,7 @@ def start_scheduler():
     print("[OK] Vendor order expiry/reminder checks started (every 5 minutes).")
     print("[OK] Chain tx retry job started (every 2 minutes).")
     print("[OK] Notification outbox job started (every 1 minute).")
-    print("[OK] VEMA auto-reorder scan started (every 30 minutes).")
+    print("[OK] Critical-stock reorder scan started (every 30 minutes).")
     return _scheduler
 
 
