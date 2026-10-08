@@ -1,5 +1,5 @@
 // src/pages/DemandPrediction.tsx
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CalendarDays, Loader2, Cpu, ArrowUpDown, Package,
@@ -21,35 +21,34 @@ const StatusBadge = ({ status }: { status: string }) => {
   );
 };
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
-
 const DemandPrediction = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [date, setDate] = useState(todayStr());
+  // Nothing is fetched until the user picks a date and clicks Get Prediction.
+  const [date, setDate] = useState("");
   const [data, setData] = useState<DemandForecastResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const load = async (d: string) => {
     setLoading(true);
+    setError(null);
     try {
       const res = await getDemandForecast(d);
       setData(res);
     } catch (e: unknown) {
       toast({ title: "Prediction failed", description: String(e), variant: "destructive" });
+      setError(String(e));
       setData(null);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    load(date);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handlePredict = () => load(date);
+  const handlePredict = () => {
+    if (date) load(date);
+  };
 
   const items = [...(data?.items || [])].sort((a, b) =>
     sortDir === "asc"
@@ -97,7 +96,7 @@ const DemandPrediction = () => {
         </div>
         <button
           onClick={handlePredict}
-          disabled={loading}
+          disabled={loading || !date}
           className="flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-semibold btn-navy disabled:opacity-50"
         >
           {loading ? <Loader2 size={16} className="animate-spin" /> : <TrendingUp size={16} />}
@@ -188,10 +187,14 @@ const DemandPrediction = () => {
             </div>
           </div>
         </>
-      ) : (
+      ) : error ? (
         <div className="glass-card p-10 text-center text-muted-foreground">
-          Select a date and click "Get Prediction" to forecast demand.
+          Prediction failed. Check the date and click "Get Prediction" to try again.
         </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Select a date and click Get Prediction to view forecasted demand.
+        </p>
       )}
     </div>
   );
