@@ -798,6 +798,17 @@ export interface VendorApplicationItemInput {
   lead_time_days?: number;
 }
 
+export interface VendorPayoutAccountInput {
+  payout_method: "bank_account" | "mobile_wallet";
+  account_title: string;
+  bank_name?: string;
+  branch_code?: string;
+  iban?: string;
+  account_number?: string;
+  wallet_provider?: string;
+  wallet_number?: string;
+}
+
 export interface VendorApplicationPayload {
   legal_company_name: string;
   trade_name?: string;
@@ -832,12 +843,28 @@ export interface VendorApplicationPayload {
   certifications: string[];
 
   items: VendorApplicationItemInput[];
+
+  // The verified payout destination for the post-delivery payment release —
+  // separate from the informal bank_name/bank_account_title/bank_iban above.
+  payout_account: VendorPayoutAccountInput;
+
   consent: boolean;
   website_hp?: string; // honeypot — always leave blank
 }
 
 export const getVendorCategories = () =>
   apiFetch<{ categories: string[] }>("/api/public/vendors/categories");
+
+export interface VendorBank {
+  value: string;
+  label: string;
+}
+
+export const getVendorBanks = () =>
+  apiFetch<{ banks: VendorBank[] }>("/api/public/vendors/banks");
+
+export const getVendorWalletProviders = () =>
+  apiFetch<{ providers: VendorBank[] }>("/api/public/vendors/wallet-providers");
 
 export const getVendorTemplateUrl = () => `${API_BASE_URL}/api/public/vendors/template`;
 
@@ -954,6 +981,21 @@ export interface VendorApplicationItem {
   row_source: string;
 }
 
+export interface VendorPaymentAccountSummary {
+  id: string;
+  payout_method: "bank_account" | "mobile_wallet";
+  account_title: string;
+  bank_name: string | null;
+  branch_code: string | null;
+  iban_masked: string | null;
+  account_number_masked: string | null;
+  wallet_provider: string | null;
+  wallet_number_masked: string | null;
+  verification_status: "pending" | "verified" | "rejected";
+  verified_at: string | null;
+  rejection_reason: string | null;
+}
+
 export interface VendorApplicationDetail extends VendorApplicationSummary {
   ntn: string;
   strn: string | null;
@@ -984,6 +1026,7 @@ export interface VendorApplicationDetail extends VendorApplicationSummary {
   approved_vendor_id: string | null;
   items: VendorApplicationItem[];
   documents: VendorApplicationDocument[];
+  payment_account: VendorPaymentAccountSummary | null;
 }
 
 export const getVendorApplication = (id: string) =>
@@ -1013,6 +1056,33 @@ export const requestVendorApplicationInfo = (id: string, note: string) =>
   apiFetch<{ message: string }>(`/api/vendor-applications/${id}/request-info`, {
     method: "POST",
     body: JSON.stringify({ note }),
+  });
+
+export interface RevealedPayoutAccount {
+  payout_method: "bank_account" | "mobile_wallet";
+  account_title: string;
+  bank_name: string | null;
+  branch_code: string | null;
+  wallet_provider: string | null;
+  iban?: string | null;
+  account_number?: string | null;
+  wallet_number?: string | null;
+}
+
+export const revealVendorPaymentAccount = (id: string) =>
+  apiFetch<RevealedPayoutAccount>(`/api/vendor-applications/${id}/payment-account/reveal`, {
+    method: "POST",
+  });
+
+export const verifyVendorPaymentAccount = (id: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-applications/${id}/payment-account/verify`, {
+    method: "POST",
+  });
+
+export const rejectVendorPaymentAccount = (id: string, reason: string) =>
+  apiFetch<{ message: string }>(`/api/vendor-applications/${id}/payment-account/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
   });
 
 export interface Vendor {
@@ -1536,3 +1606,92 @@ export const downloadPendingTransfersCsv = async () => {
   a.remove();
   window.URL.revokeObjectURL(url);
 };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VEMA Auto-Reorders — proposal -> PM/Admin approval -> real order (see
+// docs/VEMA_AUTO_REORDER.md). Separate from, and additive alongside, the
+// older /api/procurement/pending-approvals queue (ApprovalsQueue.tsx).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface VemaVendorCandidate {
+  vendor_id: string;
+  vendor_name: string;
+  vendor_email: string;
+  unit_price: number;
+  lead_time_days: number;
+  moq: number | null;
+  accept_rate: number | null;
+  price_score: number;
+  lead_time_score: number;
+  score: number;
+}
+
+export interface VemaReorderRequest {
+  id: string;
+  request_code: string;
+  item_id: string;
+  item_name: string;
+  unit: string;
+  category: string;
+  stock_at_trigger: number;
+  par_level: number;
+  threshold_pct: number;
+  suggested_qty: number;
+  unit_price_est: number | null;
+  total_est: number | null;
+  vendor_id: string | null;
+  vendor_name: string | null;
+  vendor_email: string | null;
+  alt_vendor_ids: string[];
+  vendor_score_breakdown: Record<string, VemaVendorCandidate>;
+  rationale: string;
+  status: "pending_approval" | "approved" | "rejected" | "expired";
+  decided_by: string | null;
+  decided_at: string | null;
+  decision_note: string | null;
+  edited_qty: number | null;
+  edited_vendor_id: string | null;
+  resulting_order_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VemaReorderStats {
+  pending: number;
+  approved: number;
+  rejected: number;
+  expired: number;
+  approval_rate: number | null;
+}
+
+export const listVemaReorderRequests = (params?: {
+  status?: string; item_id?: string; vendor_id?: string; search?: string;
+  date_from?: string; date_to?: string; limit?: number; offset?: number;
+}) => {
+  const q = new URLSearchParams();
+  if (params?.status) q.set("status", params.status);
+  if (params?.item_id) q.set("item_id", params.item_id);
+  if (params?.vendor_id) q.set("vendor_id", params.vendor_id);
+  if (params?.search) q.set("search", params.search);
+  if (params?.date_from) q.set("date_from", params.date_from);
+  if (params?.date_to) q.set("date_to", params.date_to);
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.offset) q.set("offset", String(params.offset));
+  return apiFetch<{ requests: VemaReorderRequest[]; total: number }>(`/api/procurement/vema-requests?${q.toString()}`);
+};
+
+export const getVemaReorderStats = () => apiFetch<VemaReorderStats>("/api/procurement/vema-requests/stats");
+
+export const getVemaReorderRequest = (id: string) =>
+  apiFetch<VemaReorderRequest>(`/api/procurement/vema-requests/${id}`);
+
+export const approveVemaReorderRequest = (id: string, body?: { qty?: number; vendor_id?: string; note?: string }) =>
+  apiFetch<{ message: string; order_id: string; order_code: string; vendor_email_status: string }>(
+    `/api/procurement/vema-requests/${id}/approve`,
+    { method: "POST", body: JSON.stringify(body || {}) }
+  );
+
+export const rejectVemaReorderRequest = (id: string, reason: string) =>
+  apiFetch<{ message: string }>(`/api/procurement/vema-requests/${id}/reject`, {
+    method: "POST", body: JSON.stringify({ reason }),
+  });

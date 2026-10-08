@@ -33,6 +33,7 @@ import Payments from "@/pages/Payments";
 
 import ProcurementDashboard from "@/pages/procurement/ProcurementDashboard";
 import ApprovalsQueue from "@/pages/procurement/ApprovalsQueue";
+import VemaReorders from "@/pages/procurement/VemaReorders";
 import VendorCommunication from "@/pages/procurement/VendorCommunication";
 import CRDashboard from "@/pages/cr/CRDashboard";
 import TicketLog from "@/pages/cr/TicketLog";
@@ -59,6 +60,7 @@ function App() {
                 <Route path="inventory" element={<Inventory />} />
                 <Route path="demand-prediction" element={<DemandPrediction />} />
                 <Route path="procurement" element={<Procurement />} />
+                <Route path="vema-reorders" element={<VemaReorders />} />
                 <Route path="vendor-applications" element={<VendorApplications />} />
                 <Route path="vendor-catalogue" element={<VendorCatalogue />} />
                 <Route path="place-order" element={<PlaceVendorOrder />} />
@@ -79,6 +81,7 @@ function App() {
               <Route path="/procurement" element={<ProcurementLayout />}>
                 <Route index element={<ProcurementDashboard />} />
                 <Route path="approvals" element={<ApprovalsQueue />} />
+                <Route path="vema-reorders" element={<VemaReorders />} />
                 <Route path="vendors" element={<VendorCommunication />} />
                 <Route path="vendor-applications" element={<VendorApplications />} />
                 <Route path="vendor-catalogue" element={<VendorCatalogue />} />

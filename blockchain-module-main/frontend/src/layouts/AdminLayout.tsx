@@ -11,6 +11,7 @@ const TITLES: Record<string, string> = {
   "/admin/inventory": "Inventory Management",
   "/admin/demand-prediction": "Demand Prediction",
   "/admin/procurement": "Procurement",
+  "/admin/vema-reorders": "VEMA Auto-Reorders",
   "/admin/vendor-applications": "Vendor Applications",
   "/admin/vendor-catalogue": "Vendor Catalogue",
   "/admin/place-order": "Place Vendor Order",
@@ -29,7 +30,7 @@ const AdminLayout = () => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const title = TITLES[location.pathname] || "NEXUS ERP";
-  const badges = useSidebarBadges("/admin/tracking", "/admin/vendor-applications");
+  const badges = useSidebarBadges("/admin/tracking", "/admin/vendor-applications", "/admin/vema-reorders");
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

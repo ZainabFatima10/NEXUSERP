@@ -19,6 +19,7 @@ import shipment_chain_service
 import vendor_orders
 import payments
 import notification_engine
+import vema_reorder_service
 
 _scheduler = None
 
@@ -102,6 +103,26 @@ def _run_chain_retry_job():
         print(f"[WARN] reminder_scheduler: chain tx retry failed: {e}")
 
 
+def _run_vema_reorder_scan():
+    """Periodic trigger (b) for vema_reorder_service — trigger (a) is
+    inventory_v2's own scan/stock-update paths calling it directly. Also
+    expires stale pending requests in the same pass."""
+    try:
+        with db_session() as db:
+            created = vema_reorder_service.scan_and_create_requests(db)
+            if created:
+                print(f"[OK] vema_reorder_service: {len(created)} new reorder proposal(s).")
+    except Exception as e:
+        print(f"[WARN] reminder_scheduler: VEMA reorder scan failed: {e}")
+    try:
+        with db_session() as db:
+            n = vema_reorder_service.expire_stale_requests(db)
+            if n:
+                print(f"[OK] vema_reorder_service: expired {n} stale reorder proposal(s).")
+    except Exception as e:
+        print(f"[WARN] reminder_scheduler: VEMA reorder expiry check failed: {e}")
+
+
 def _run_notification_outbox_job():
     """Phase 3: sends queued staff emails (notification_outbox), with
     backoff retry on failure — see notification_engine.py."""
@@ -123,11 +144,13 @@ def start_scheduler():
     _scheduler.add_job(_run_vendor_order_jobs, "interval", minutes=5, id="vendor_order_checks", max_instances=1)
     _scheduler.add_job(_run_chain_retry_job, "interval", minutes=2, id="chain_tx_retry", max_instances=1)
     _scheduler.add_job(_run_notification_outbox_job, "interval", minutes=1, id="notification_outbox", max_instances=1)
+    _scheduler.add_job(_run_vema_reorder_scan, "interval", minutes=30, id="vema_reorder_scan", max_instances=1)
     _scheduler.start()
     print("[OK] VEMA reminder scheduler started (checks every 1 minute).")
     print("[OK] Vendor order expiry/reminder checks started (every 5 minutes).")
     print("[OK] Chain tx retry job started (every 2 minutes).")
     print("[OK] Notification outbox job started (every 1 minute).")
+    print("[OK] VEMA auto-reorder scan started (every 30 minutes).")
     return _scheduler
 
 

@@ -221,10 +221,22 @@ def run_inventory_check(
         )
         created.append(result)
 
+    # VEMA auto-reorder scan (additive, parallel system — see
+    # vema_reorder_service.py). Runs after the existing per-item loop above
+    # so it never interferes with it; its own dedup checks procurement_orders
+    # too, so an item this loop just created an order for is skipped.
+    vema_requests = []
+    try:
+        import vema_reorder_service
+        vema_requests = vema_reorder_service.scan_and_create_requests(db)
+    except Exception as e:
+        print(f"[WARN] inventory_v2: VEMA auto-reorder scan failed ({e})")
+
     return {
-        "message":    f"{len(created)} new orders generated",
-        "new_orders": created,
-        "timestamp":  datetime.utcnow().isoformat(),
+        "message":       f"{len(created)} new orders generated",
+        "new_orders":    created,
+        "vema_requests": vema_requests,
+        "timestamp":     datetime.utcnow().isoformat(),
     }
 
 
@@ -258,6 +270,17 @@ def update_stock(item_id: str, req: StockUpdateRequest, db: Session = Depends(ge
         {"s": req.current_stock, "st": new_status, "id": item_id},
     )
     db.commit()
+
+    # VEMA auto-reorder scan — see run_inventory_check()'s equivalent hook
+    # for why this is additive/non-blocking. Scans every item (cheap at this
+    # catalogue's size) rather than just this one, since scan_and_create_requests
+    # already does its own per-item dedup/threshold check.
+    try:
+        import vema_reorder_service
+        vema_reorder_service.scan_and_create_requests(db)
+    except Exception as e:
+        print(f"[WARN] inventory_v2: VEMA auto-reorder scan failed ({e})")
+
     return {"item_id": item_id, "new_stock": req.current_stock, "status": new_status}
 
 

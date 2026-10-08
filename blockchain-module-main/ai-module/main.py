@@ -24,6 +24,7 @@ from rag_router    import router as rag_router
 from vendors       import router as vendors_router
 from vendor_orders import router as vendor_orders_router
 from payments      import router as payments_router
+from vema_reorder_router import router as vema_reorder_router
 
 from database import check_connection, run_schema
 from reminder_scheduler import start_scheduler, stop_scheduler
@@ -55,6 +56,7 @@ app.include_router(rag_router)
 app.include_router(vendors_router)
 app.include_router(vendor_orders_router)
 app.include_router(payments_router)
+app.include_router(vema_reorder_router)
 
 
 @app.on_event("startup")
