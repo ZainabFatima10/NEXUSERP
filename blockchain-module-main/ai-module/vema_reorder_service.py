@@ -243,7 +243,9 @@ def _rank_vendors(db: Session, item: dict) -> tuple[Optional[dict], list[dict], 
             "lead_time_score": round(lead_time_score, 3), "score": score,
         })
 
-    scored.sort(key=lambda c: c["score"], reverse=True)
+    # When several vendors clash for the same item, the lowest unit price
+    # wins; the weighted score above only breaks a price tie.
+    scored.sort(key=lambda c: (c["unit_price"], -c["score"]))
     breakdown = {c["vendor_id"]: c for c in scored}
     return scored[0], scored[1:], breakdown
 
