@@ -78,25 +78,66 @@ Placing a blockchain procurement order — from the **Procurement** tab (manual/
   - Also reachable any time via the **Billing** tab in `OrderDetailModal.tsx`, or the "Invoice" link next to any order in the Procurement tables.
 - `src/services/api.ts` exposes `getInvoice(orderId)` and `downloadInvoicePdf(orderId)` (the latter does a raw `fetch` + blob download, since the response isn't JSON).
 
+## VEMA Auto-Reorders
+
+See `VEMA_AUTO_REORDER.md` for the full flow — a deterministic stock-scan
+proposal (quantity, ranked vendor, LLM-phrased rationale) that a
+Procurement Manager/Admin approves or rejects *before* any order exists.
+Separate from, and additive alongside, the older `/procurement/approvals`
+queue (`ApprovalsQueue.tsx`) — the "Reorder Approvals" tab reviews an
+already-created `<=20%`-triggered order; "VEMA Auto-Reorders" reviews the
+proposal itself, with no order created until approved.
+
+- `src/pages/procurement/VemaReorders.tsx` — summary cards, status tabs
+  (Pending/Approved/Rejected/All), search, a table with a stock-vs-par
+  progress bar per row, a detail drawer (rationale, full vendor score
+  breakdown, editable qty/vendor before approving), and approve/reject
+  confirmation dialogs. Routed at `/procurement/vema-reorders` (PM) and
+  `/admin/vema-reorders` (Admin) — both render the same component. No mock
+  data; every field comes from `GET /api/procurement/vema-requests*`.
+- Nav: "Procurement" section in `ProcurementLayout.tsx`'s sidebar, and
+  "Supply Chain" section in `Sidebar.tsx`'s Admin nav — both with a
+  pending-count badge via `useSidebarBadges()` (now takes an optional
+  third `vemaReordersPath` argument).
+- `src/services/api.ts`: `listVemaReorderRequests`, `getVemaReorderStats`,
+  `getVemaReorderRequest`, `approveVemaReorderRequest`,
+  `rejectVemaReorderRequest`.
+
 ## Vendor registration & vetting
 
 Vendors never get a login — see `VENDOR_ONBOARDING.md` for the full flow and
 field list. Frontend pieces, all wired to real endpoints (no mock data):
 
 - `src/pages/marketing/BecomeVendor.tsx` (`/become-a-vendor`, public) — a
-  6-step form (company → contact/location → commercial terms → documents →
-  catalogue → review). Catalogue rows come from a manual grid, an
-  `.xlsx`/`.csv` upload previewed via `POST /api/public/vendors/items/parse`
-  (bad rows shown with reasons, never silently dropped), or both merged
-  together. Submits via `POST /api/public/vendors/apply` (multipart:
-  JSON payload + document files). A honeypot field and a per-IP rate limit
-  guard the public endpoint server-side.
+  7-step form (company → contact/location → commercial terms → documents →
+  catalogue → **payout details** → review). Catalogue rows come from a
+  manual grid, an `.xlsx`/`.csv` upload previewed via
+  `POST /api/public/vendors/items/parse` (bad rows shown with reasons,
+  never silently dropped), or both merged together. Submits via
+  `POST /api/public/vendors/apply` (multipart: JSON payload + document
+  files). A honeypot field and a per-IP rate limit guard the public
+  endpoint server-side.
+  - **Payout Details step** (new — see `VENDOR_PAYOUT_ACCOUNTS.md`): toggle
+    between Bank Account / Mobile Wallet; bank picked from a datalist
+    sourced from `GET /api/public/vendors/banks`, wallet provider from
+    `GET /api/public/vendors/wallet-providers`. The IBAN field
+    auto-formats into groups of 4 as you type (`formatIbanInput`) and is
+    validated client-side with a *full* ISO 13616/mod-97 checksum
+    (`isPakistaniIBANChecksum` in `lib/validation.ts`) — stricter than the
+    format-only `isPakistaniIBAN` used by the legacy Commercial Terms bank
+    field a few steps earlier, which is left completely unchanged. This is
+    a genuinely separate, verified destination from that field — see the
+    linked doc for why both exist.
 - `src/pages/vendors/VendorApplications.tsx` — shared by
   `/admin/vendor-applications` and `/procurement/vendor-applications`
   (same component, same `GET /api/vendor-applications` endpoint, gated by
   RBAC either way — this mirrors how `CategoryReference.tsx` / `Notifications.tsx`
   are already reused across layouts). Tabs by status, a vetting checklist,
-  and Approve / Reject (reason required) / Request Info actions.
+  a **Payout Account** card (masked values, a Reveal toggle, verification
+  status badge, Verify / Reject-with-reason actions), and
+  Approve / Reject (reason required) / Request Info actions. Approve is
+  rejected server-side (and shown as a toast) until the payout account is
+  marked `verified`.
 - `src/pages/vendors/VendorCatalogue.tsx` — same shared-component pattern,
   mounted at `/admin/vendor-catalogue` and `/procurement/vendor-catalogue`.
   Lists only `status='active'` vendors (enforced server-side, not just

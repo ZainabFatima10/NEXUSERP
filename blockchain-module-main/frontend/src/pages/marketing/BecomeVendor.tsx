@@ -9,9 +9,15 @@ import Navbar from "@/components/marketing/Navbar";
 import Footer from "@/components/marketing/Footer";
 import {
   getVendorCategories, getVendorTemplateUrl, parseVendorCatalogueFile, applyVendor,
-  VendorApplicationPayload, VendorApplicationItemInput, VendorDocumentUpload,
+  getVendorBanks, getVendorWalletProviders,
+  VendorApplicationPayload, VendorApplicationItemInput, VendorDocumentUpload, VendorPayoutAccountInput, VendorBank,
   ParsedCatalogueRow, ParsedCatalogueInvalidRow,
 } from "@/services/api";
+import FieldError from "@/components/FieldError";
+import {
+  validate, required, isEmail, isInteger, isPositive, isNonNegative, min, max, minLength, maxLength,
+  isPakistaniMobile, isPakistaniIBANChecksum, errorInputClass,
+} from "@/lib/validation";
 
 const BUSINESS_TYPES = ["Manufacturer", "Distributor", "Authorized Dealer", "Service Provider", "Other"];
 const PK_PROVINCES = ["Punjab", "Sindh", "Khyber Pakhtunkhwa", "Balochistan", "Gilgit-Baltistan", "Azad Kashmir", "Islamabad Capital Territory"];
@@ -22,7 +28,7 @@ const DOC_TYPES: { value: string; label: string }[] = [
   { value: "brochure", label: "Brochure (optional)" },
   { value: "authorization_letter", label: "Authorization Letter (optional)" },
 ];
-const STEPS = ["Company", "Contact & Location", "Commercial Terms", "Documents", "Catalogue", "Review"];
+const STEPS = ["Company", "Contact & Location", "Commercial Terms", "Documents", "Catalogue", "Payout Details", "Review"];
 
 const inputCls =
   "w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-accent-cyan/50 text-sm";
@@ -33,7 +39,7 @@ const chipCls = (active: boolean) =>
     active ? "bg-accent-cyan/20 border-accent-cyan/50 text-accent-cyan" : "bg-white/5 border-white/15 text-white/60 hover:border-white/30"
   }`;
 
-type FormState = Omit<VendorApplicationPayload, "items" | "consent" | "website_hp">;
+type FormState = Omit<VendorApplicationPayload, "items" | "consent" | "website_hp" | "payout_account">;
 
 const emptyForm: FormState = {
   legal_company_name: "", trade_name: "", business_type: "", ntn: "", strn: "",
@@ -43,7 +49,7 @@ const emptyForm: FormState = {
   alternate_phone: "", address: "", city: "", province: "", postal_code: "",
   coverage_provinces: [], coverage_cities: [],
   lead_time_days: undefined, payment_terms: "", min_order_value: undefined,
-  warranty: "", bank_name: "", bank_account_title: "", bank_iban: "",
+  warranty: "",
   certifications: [],
 };
 
@@ -58,6 +64,7 @@ const BecomeVendor = () => {
   const [consent, setConsent] = useState(false);
   const [honeypot, setHoneypot] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string | null | undefined>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ reference_code: string } | null>(null);
 
@@ -67,8 +74,24 @@ const BecomeVendor = () => {
     invalid: ParsedCatalogueInvalidRow[];
   } | null>(null);
 
+  // Payout Details — the verified destination for the post-delivery payment
+  // release, distinct from the informal bank fields on the Commercial Terms
+  // step above. See VENDOR_PAYOUT_ACCOUNTS.md.
+  const [payoutMethod, setPayoutMethod] = useState<"bank_account" | "mobile_wallet">("bank_account");
+  const [payoutAccountTitle, setPayoutAccountTitle] = useState("");
+  const [payoutBankName, setPayoutBankName] = useState("");
+  const [payoutBranchCode, setPayoutBranchCode] = useState("");
+  const [payoutIban, setPayoutIban] = useState("");
+  const [payoutAccountNumber, setPayoutAccountNumber] = useState("");
+  const [payoutWalletProvider, setPayoutWalletProvider] = useState("");
+  const [payoutWalletNumber, setPayoutWalletNumber] = useState("");
+  const [banks, setBanks] = useState<VendorBank[]>([]);
+  const [walletProviders, setWalletProviders] = useState<VendorBank[]>([]);
+
   useEffect(() => {
     getVendorCategories().then((r) => setCategories(r.categories)).catch(() => {});
+    getVendorBanks().then((r) => setBanks(r.banks)).catch(() => {});
+    getVendorWalletProviders().then((r) => setWalletProviders(r.providers)).catch(() => {});
   }, []);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -79,6 +102,50 @@ const BecomeVendor = () => {
       const arr = f[key];
       return { ...f, [key]: arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value] };
     });
+  };
+
+  // ── Field-level validators (red border + message below) ─────────
+  const setFieldError = (key: string, err: string | null) => setFieldErrors((f) => ({ ...f, [key]: err }));
+  const vLegalName = () => validate(form.legal_company_name, required("Legal company name is required"));
+  const vNtn = () => validate(form.ntn, required("NTN is required"));
+  const vYearEstablished = () =>
+    form.year_established === undefined ? null :
+    validate(String(form.year_established), isInteger(), min(1900, "Enter a valid year"), max(new Date().getFullYear(), "Year cannot be in the future"));
+  const vContactName = () => validate(form.contact_name, required("Contact name is required"));
+  const vOrderEmail = () => validate(form.order_email, required("Order email is required"), isEmail());
+  const vMobile = () => validate(form.mobile, required("Mobile number is required"), isPakistaniMobile());
+  const vAddress = () => validate(form.address, required("Address is required"));
+  const vCity = () => validate(form.city, required("City is required"));
+  const vLeadTime = () =>
+    form.lead_time_days === undefined ? null : validate(String(form.lead_time_days), isInteger(), isNonNegative());
+  const vMinOrderValue = () =>
+    form.min_order_value === undefined ? null : validate(String(form.min_order_value), isNonNegative());
+  const vItemName = (idx: number) => validate(items[idx].name, required("Item name is required"));
+  const vItemUnit = (idx: number) => validate(items[idx].unit, required("Unit is required"));
+  const vItemPrice = (idx: number) => validate(String(items[idx].unit_price), isPositive("Price must be greater than 0"));
+  const vItemMoq = (idx: number) =>
+    items[idx].moq === undefined ? null : validate(String(items[idx].moq), isNonNegative());
+  const vItemLeadTime = (idx: number) =>
+    items[idx].lead_time_days === undefined ? null : validate(String(items[idx].lead_time_days), isNonNegative());
+
+  const vPayoutTitle = () => validate(payoutAccountTitle, required("Account title is required"), minLength(3), maxLength(100));
+  const vPayoutBank = () =>
+    payoutMethod === "bank_account" ? validate(payoutBankName, required("Bank is required")) : null;
+  const vPayoutIban = () =>
+    payoutMethod === "bank_account" ? validate(payoutIban, required("IBAN is required"), isPakistaniIBANChecksum()) : null;
+  const vPayoutAccountNumber = () => {
+    if (payoutMethod !== "bank_account" || !payoutAccountNumber.trim()) return null;
+    const digits = payoutAccountNumber.replace(/\D/g, "");
+    return digits.length >= 8 && digits.length <= 20 ? null : "Account number must be 8-20 digits";
+  };
+  const vPayoutWalletProvider = () =>
+    payoutMethod === "mobile_wallet" ? validate(payoutWalletProvider, required("Wallet provider is required")) : null;
+  const vPayoutWalletNumber = () =>
+    payoutMethod === "mobile_wallet" ? validate(payoutWalletNumber, required("Wallet number is required"), isPakistaniMobile()) : null;
+
+  const formatIbanInput = (raw: string) => {
+    const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    return clean.match(/.{1,4}/g)?.join(" ") ?? clean;
   };
 
   // ── Step validation ──────────────────────────────────────────────
@@ -99,14 +166,19 @@ const BecomeVendor = () => {
       if (!form.city.trim()) e.push("City is required");
       if (!form.province) e.push("Province is required");
     }
-    if (s === 2 && form.bank_iban) {
-      const iban = form.bank_iban.replace(/\s/g, "").toUpperCase();
-      if (iban.length !== 24 || !iban.startsWith("PK")) {
-        e.push("IBAN must be 24 characters and start with 'PK'");
-      }
-    }
     if (s === 4 && items.length === 0) {
       e.push("Add at least one catalogue item (manually or via upload) before continuing");
+    }
+    if (s === 5) {
+      if (vPayoutTitle()) e.push("A valid payout account title is required");
+      if (payoutMethod === "bank_account") {
+        if (vPayoutBank()) e.push("A bank is required");
+        if (vPayoutIban()) e.push("A valid IBAN is required");
+        if (vPayoutAccountNumber()) e.push("Account number must be 8-20 digits");
+      } else {
+        if (vPayoutWalletProvider()) e.push("A wallet provider is required");
+        if (vPayoutWalletNumber()) e.push("A valid wallet number is required");
+      }
     }
     return e;
   };
@@ -123,7 +195,15 @@ const BecomeVendor = () => {
   const addManualRow = () => setItems((rows) => [...rows, { name: "", unit: "units", unit_price: 0 }]);
   const updateRow = (idx: number, patch: Partial<VendorApplicationItemInput>) =>
     setItems((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
-  const removeRow = (idx: number) => setItems((rows) => rows.filter((_, i) => i !== idx));
+  const removeRow = (idx: number) => {
+    setItems((rows) => rows.filter((_, i) => i !== idx));
+    setFieldErrors((f) => {
+      const next = { ...f };
+      delete next[`item_${idx}_name`]; delete next[`item_${idx}_unit`];
+      delete next[`item_${idx}_price`]; delete next[`item_${idx}_moq`]; delete next[`item_${idx}_lead`];
+      return next;
+    });
+  };
 
   // ── Catalogue: file upload/preview ───────────────────────────────
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -180,11 +260,28 @@ const BecomeVendor = () => {
     setSubmitting(true);
     setErrors([]);
     try {
+      const payout_account: VendorPayoutAccountInput =
+        payoutMethod === "bank_account"
+          ? {
+              payout_method: "bank_account",
+              account_title: payoutAccountTitle.trim(),
+              bank_name: payoutBankName,
+              branch_code: payoutBranchCode.trim() || undefined,
+              iban: payoutIban.replace(/\s/g, ""),
+              account_number: payoutAccountNumber.replace(/\D/g, "") || undefined,
+            }
+          : {
+              payout_method: "mobile_wallet",
+              account_title: payoutAccountTitle.trim(),
+              wallet_provider: payoutWalletProvider,
+              wallet_number: payoutWalletNumber,
+            };
       const payload: VendorApplicationPayload = {
         ...form,
         coverage_cities: citiesText.split(",").map((c) => c.trim()).filter(Boolean),
         certifications: certsText.split(",").map((c) => c.trim()).filter(Boolean),
         items,
+        payout_account,
         consent,
         website_hp: honeypot,
       };
@@ -270,7 +367,13 @@ const BecomeVendor = () => {
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Legal Company Name *</label>
-                  <input className={inputCls} value={form.legal_company_name} onChange={(e) => update("legal_company_name", e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.legal_company_name ? errorInputClass : ""}`}
+                    value={form.legal_company_name}
+                    onChange={(e) => update("legal_company_name", e.target.value)}
+                    onBlur={() => setFieldError("legal_company_name", vLegalName())}
+                  />
+                  <FieldError message={fieldErrors.legal_company_name} />
                 </div>
                 <div>
                   <label className={labelCls}>Trade / Brand Name</label>
@@ -290,7 +393,13 @@ const BecomeVendor = () => {
               <div className="grid sm:grid-cols-3 gap-4">
                 <div>
                   <label className={labelCls}>NTN *</label>
-                  <input className={inputCls} value={form.ntn} onChange={(e) => update("ntn", e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.ntn ? errorInputClass : ""}`}
+                    value={form.ntn}
+                    onChange={(e) => update("ntn", e.target.value)}
+                    onBlur={() => setFieldError("ntn", vNtn())}
+                  />
+                  <FieldError message={fieldErrors.ntn} />
                 </div>
                 <div>
                   <label className={labelCls}>STRN / Sales Tax Reg.</label>
@@ -304,7 +413,14 @@ const BecomeVendor = () => {
               <div className="grid sm:grid-cols-3 gap-4">
                 <div>
                   <label className={labelCls}>Year Established</label>
-                  <input type="number" className={inputCls} value={form.year_established ?? ""} onChange={(e) => update("year_established", e.target.value ? Number(e.target.value) : undefined)} />
+                  <input
+                    type="number"
+                    className={`${inputCls} ${fieldErrors.year_established ? errorInputClass : ""}`}
+                    value={form.year_established ?? ""}
+                    onChange={(e) => update("year_established", e.target.value ? Number(e.target.value) : undefined)}
+                    onBlur={() => setFieldError("year_established", vYearEstablished())}
+                  />
+                  <FieldError message={fieldErrors.year_established} />
                 </div>
                 <div>
                   <label className={labelCls}>Employees</label>
@@ -338,7 +454,13 @@ const BecomeVendor = () => {
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Primary Contact Name *</label>
-                  <input className={inputCls} value={form.contact_name} onChange={(e) => update("contact_name", e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.contact_name ? errorInputClass : ""}`}
+                    value={form.contact_name}
+                    onChange={(e) => update("contact_name", e.target.value)}
+                    onBlur={() => setFieldError("contact_name", vContactName())}
+                  />
+                  <FieldError message={fieldErrors.contact_name} />
                 </div>
                 <div>
                   <label className={labelCls}>Designation</label>
@@ -347,13 +469,28 @@ const BecomeVendor = () => {
               </div>
               <div>
                 <label className={labelCls}>Order Email *</label>
-                <input type="email" className={inputCls} placeholder="orders@yourcompany.com" value={form.order_email} onChange={(e) => update("order_email", e.target.value)} />
+                <input
+                  type="email"
+                  className={`${inputCls} ${fieldErrors.order_email ? errorInputClass : ""}`}
+                  placeholder="orders@yourcompany.com"
+                  value={form.order_email}
+                  onChange={(e) => update("order_email", e.target.value)}
+                  onBlur={() => setFieldError("order_email", vOrderEmail())}
+                />
+                <FieldError message={fieldErrors.order_email} />
                 <p className="text-xs text-white/40 mt-1">Purchase order requests will be sent here — we'll email a verification link too.</p>
               </div>
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className={labelCls}>Mobile *</label>
-                  <input className={inputCls} placeholder="03XXXXXXXXX" value={form.mobile} onChange={(e) => update("mobile", e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.mobile ? errorInputClass : ""}`}
+                    placeholder="03XXXXXXXXX"
+                    value={form.mobile}
+                    onChange={(e) => update("mobile", e.target.value)}
+                    onBlur={() => setFieldError("mobile", vMobile())}
+                  />
+                  <FieldError message={fieldErrors.mobile} />
                 </div>
                 <div>
                   <label className={labelCls}>Alternate Phone</label>
@@ -362,12 +499,25 @@ const BecomeVendor = () => {
               </div>
               <div>
                 <label className={labelCls}>Registered Address *</label>
-                <textarea className={inputCls} rows={2} value={form.address} onChange={(e) => update("address", e.target.value)} />
+                <textarea
+                  className={`${inputCls} ${fieldErrors.address ? errorInputClass : ""}`}
+                  rows={2}
+                  value={form.address}
+                  onChange={(e) => update("address", e.target.value)}
+                  onBlur={() => setFieldError("address", vAddress())}
+                />
+                <FieldError message={fieldErrors.address} />
               </div>
               <div className="grid sm:grid-cols-3 gap-4">
                 <div>
                   <label className={labelCls}>City *</label>
-                  <input className={inputCls} value={form.city} onChange={(e) => update("city", e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.city ? errorInputClass : ""}`}
+                    value={form.city}
+                    onChange={(e) => update("city", e.target.value)}
+                    onBlur={() => setFieldError("city", vCity())}
+                  />
+                  <FieldError message={fieldErrors.city} />
                 </div>
                 <div>
                   <label className={labelCls}>Province *</label>
@@ -405,7 +555,14 @@ const BecomeVendor = () => {
               <div className="grid sm:grid-cols-3 gap-4">
                 <div>
                   <label className={labelCls}>Standard Lead Time (days)</label>
-                  <input type="number" className={inputCls} value={form.lead_time_days ?? ""} onChange={(e) => update("lead_time_days", e.target.value ? Number(e.target.value) : undefined)} />
+                  <input
+                    type="number"
+                    className={`${inputCls} ${fieldErrors.lead_time_days ? errorInputClass : ""}`}
+                    value={form.lead_time_days ?? ""}
+                    onChange={(e) => update("lead_time_days", e.target.value ? Number(e.target.value) : undefined)}
+                    onBlur={() => setFieldError("lead_time_days", vLeadTime())}
+                  />
+                  <FieldError message={fieldErrors.lead_time_days} />
                 </div>
                 <div>
                   <label className={labelCls}>Payment Terms</label>
@@ -413,7 +570,14 @@ const BecomeVendor = () => {
                 </div>
                 <div>
                   <label className={labelCls}>Minimum Order Value (PKR)</label>
-                  <input type="number" className={inputCls} value={form.min_order_value ?? ""} onChange={(e) => update("min_order_value", e.target.value ? Number(e.target.value) : undefined)} />
+                  <input
+                    type="number"
+                    className={`${inputCls} ${fieldErrors.min_order_value ? errorInputClass : ""}`}
+                    value={form.min_order_value ?? ""}
+                    onChange={(e) => update("min_order_value", e.target.value ? Number(e.target.value) : undefined)}
+                    onBlur={() => setFieldError("min_order_value", vMinOrderValue())}
+                  />
+                  <FieldError message={fieldErrors.min_order_value} />
                 </div>
               </div>
               <div>
@@ -423,25 +587,6 @@ const BecomeVendor = () => {
               <div>
                 <label className={labelCls}>Certifications (comma-separated — ISO, PEC, NEPRA, etc.)</label>
                 <input className={inputCls} placeholder="ISO 9001, PEC Licensed" value={certsText} onChange={(e) => setCertsText(e.target.value)} />
-              </div>
-              <div className="pt-2 border-t border-white/10">
-                <p className="text-xs text-white/40 mb-3">
-                  Bank details — for verification only, never shown in any public listing.
-                </p>
-                <div className="grid sm:grid-cols-3 gap-4">
-                  <div>
-                    <label className={labelCls}>Bank Name</label>
-                    <input className={inputCls} value={form.bank_name} onChange={(e) => update("bank_name", e.target.value)} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Account Title</label>
-                    <input className={inputCls} value={form.bank_account_title} onChange={(e) => update("bank_account_title", e.target.value)} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>IBAN</label>
-                    <input className={inputCls} placeholder="PK36SCBL0000001123456702" value={form.bank_iban} onChange={(e) => update("bank_iban", e.target.value)} />
-                  </div>
-                </div>
               </div>
             </div>
           )}
@@ -543,8 +688,16 @@ const BecomeVendor = () => {
                   </thead>
                   <tbody>
                     {items.map((item, idx) => (
-                      <tr key={idx} className="border-t border-white/10">
-                        <td className="py-1.5 pr-2"><input className={inputCls} value={item.name} onChange={(e) => updateRow(idx, { name: e.target.value })} /></td>
+                      <tr key={idx} className="border-t border-white/10 align-top">
+                        <td className="py-1.5 pr-2">
+                          <input
+                            className={`${inputCls} ${fieldErrors[`item_${idx}_name`] ? errorInputClass : ""}`}
+                            value={item.name}
+                            onChange={(e) => updateRow(idx, { name: e.target.value })}
+                            onBlur={() => setFieldError(`item_${idx}_name`, vItemName(idx))}
+                          />
+                          <FieldError message={fieldErrors[`item_${idx}_name`]} />
+                        </td>
                         <td className="py-1.5 pr-2"><input className={inputCls} value={item.sku || ""} onChange={(e) => updateRow(idx, { sku: e.target.value })} /></td>
                         <td className="py-1.5 pr-2">
                           <select className={inputCls} value={item.category || ""} onChange={(e) => updateRow(idx, { category: e.target.value })}>
@@ -552,10 +705,45 @@ const BecomeVendor = () => {
                             {categories.map((c) => <option key={c} value={c} className="bg-navy-900">{c}</option>)}
                           </select>
                         </td>
-                        <td className="py-1.5 pr-2"><input className={inputCls} value={item.unit} onChange={(e) => updateRow(idx, { unit: e.target.value })} /></td>
-                        <td className="py-1.5 pr-2"><input type="number" className={inputCls} value={item.unit_price} onChange={(e) => updateRow(idx, { unit_price: Number(e.target.value) })} /></td>
-                        <td className="py-1.5 pr-2"><input type="number" className={inputCls} value={item.moq ?? ""} onChange={(e) => updateRow(idx, { moq: e.target.value ? Number(e.target.value) : undefined })} /></td>
-                        <td className="py-1.5 pr-2"><input type="number" className={inputCls} value={item.lead_time_days ?? ""} onChange={(e) => updateRow(idx, { lead_time_days: e.target.value ? Number(e.target.value) : undefined })} /></td>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            className={`${inputCls} ${fieldErrors[`item_${idx}_unit`] ? errorInputClass : ""}`}
+                            value={item.unit}
+                            onChange={(e) => updateRow(idx, { unit: e.target.value })}
+                            onBlur={() => setFieldError(`item_${idx}_unit`, vItemUnit(idx))}
+                          />
+                          <FieldError message={fieldErrors[`item_${idx}_unit`]} />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            type="number"
+                            className={`${inputCls} ${fieldErrors[`item_${idx}_price`] ? errorInputClass : ""}`}
+                            value={item.unit_price}
+                            onChange={(e) => updateRow(idx, { unit_price: Number(e.target.value) })}
+                            onBlur={() => setFieldError(`item_${idx}_price`, vItemPrice(idx))}
+                          />
+                          <FieldError message={fieldErrors[`item_${idx}_price`]} />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            type="number"
+                            className={`${inputCls} ${fieldErrors[`item_${idx}_moq`] ? errorInputClass : ""}`}
+                            value={item.moq ?? ""}
+                            onChange={(e) => updateRow(idx, { moq: e.target.value ? Number(e.target.value) : undefined })}
+                            onBlur={() => setFieldError(`item_${idx}_moq`, vItemMoq(idx))}
+                          />
+                          <FieldError message={fieldErrors[`item_${idx}_moq`]} />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            type="number"
+                            className={`${inputCls} ${fieldErrors[`item_${idx}_lead`] ? errorInputClass : ""}`}
+                            value={item.lead_time_days ?? ""}
+                            onChange={(e) => updateRow(idx, { lead_time_days: e.target.value ? Number(e.target.value) : undefined })}
+                            onBlur={() => setFieldError(`item_${idx}_lead`, vItemLeadTime(idx))}
+                          />
+                          <FieldError message={fieldErrors[`item_${idx}_lead`]} />
+                        </td>
                         <td className="py-1.5"><button type="button" onClick={() => removeRow(idx)} className="text-white/40 hover:text-destructive"><Trash2 size={15} /></button></td>
                       </tr>
                     ))}
@@ -568,8 +756,127 @@ const BecomeVendor = () => {
             </div>
           )}
 
-          {/* STEP 5 — Review & Submit */}
+          {/* STEP 5 — Payout Details */}
           {step === 5 && (
+            <div className="space-y-5">
+              <h2 className="text-lg font-heading font-bold text-white mb-1">Payout Details</h2>
+              <p className="text-sm text-white/50">
+                Where NEXUS ERP sends your money. Payouts are released after a buyer confirms delivery and
+                approves receipt — this account is verified by our team before your first order can be approved.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayoutMethod("bank_account")}
+                  className={`flex-1 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                    payoutMethod === "bank_account" ? "bg-accent-cyan/20 border-accent-cyan/50 text-accent-cyan" : "bg-white/5 border-white/15 text-white/60"
+                  }`}
+                >
+                  Bank Account
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPayoutMethod("mobile_wallet")}
+                  className={`flex-1 py-2.5 rounded-lg text-sm font-medium border transition-colors ${
+                    payoutMethod === "mobile_wallet" ? "bg-accent-cyan/20 border-accent-cyan/50 text-accent-cyan" : "bg-white/5 border-white/15 text-white/60"
+                  }`}
+                >
+                  Mobile Wallet
+                </button>
+              </div>
+
+              <div>
+                <label className={labelCls}>Account Title *</label>
+                <input
+                  className={`${inputCls} ${fieldErrors.payoutTitle ? errorInputClass : ""}`}
+                  value={payoutAccountTitle}
+                  onChange={(e) => setPayoutAccountTitle(e.target.value)}
+                  onBlur={() => setFieldError("payoutTitle", vPayoutTitle())}
+                  placeholder="Name exactly as registered with the bank or wallet"
+                />
+                <FieldError message={fieldErrors.payoutTitle} />
+              </div>
+
+              {payoutMethod === "bank_account" ? (
+                <>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className={labelCls}>Bank *</label>
+                      <input
+                        list="pk-banks"
+                        className={`${inputCls} ${fieldErrors.payoutBank ? errorInputClass : ""}`}
+                        value={payoutBankName}
+                        onChange={(e) => setPayoutBankName(e.target.value)}
+                        onBlur={() => setFieldError("payoutBank", vPayoutBank())}
+                        placeholder="Start typing to search…"
+                      />
+                      <datalist id="pk-banks">
+                        {banks.map((b) => <option key={b.value} value={b.value} />)}
+                      </datalist>
+                      <FieldError message={fieldErrors.payoutBank} />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Branch Code</label>
+                      <input className={inputCls} value={payoutBranchCode} onChange={(e) => setPayoutBranchCode(e.target.value)} placeholder="Optional" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={labelCls}>IBAN *</label>
+                    <input
+                      className={`${inputCls} font-mono ${fieldErrors.payoutIban ? errorInputClass : ""}`}
+                      value={payoutIban}
+                      onChange={(e) => setPayoutIban(formatIbanInput(e.target.value))}
+                      onBlur={() => setFieldError("payoutIban", vPayoutIban())}
+                      placeholder="PK36 SCBL 0000 0011 2345 6702"
+                    />
+                    <FieldError message={fieldErrors.payoutIban} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Account Number</label>
+                    <input
+                      className={`${inputCls} font-mono ${fieldErrors.payoutAccountNumber ? errorInputClass : ""}`}
+                      value={payoutAccountNumber}
+                      onChange={(e) => setPayoutAccountNumber(e.target.value)}
+                      onBlur={() => setFieldError("payoutAccountNumber", vPayoutAccountNumber())}
+                      placeholder="Optional — digits only"
+                    />
+                    <FieldError message={fieldErrors.payoutAccountNumber} />
+                  </div>
+                </>
+              ) : (
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className={labelCls}>Wallet Provider *</label>
+                    <select
+                      className={`${inputCls} ${fieldErrors.payoutWalletProvider ? errorInputClass : ""}`}
+                      value={payoutWalletProvider}
+                      onChange={(e) => setPayoutWalletProvider(e.target.value)}
+                      onBlur={() => setFieldError("payoutWalletProvider", vPayoutWalletProvider())}
+                    >
+                      <option value="" className="bg-navy-900">Select provider</option>
+                      {walletProviders.map((p) => <option key={p.value} value={p.value} className="bg-navy-900">{p.label}</option>)}
+                    </select>
+                    <FieldError message={fieldErrors.payoutWalletProvider} />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Wallet Number *</label>
+                    <input
+                      className={`${inputCls} font-mono ${fieldErrors.payoutWalletNumber ? errorInputClass : ""}`}
+                      value={payoutWalletNumber}
+                      onChange={(e) => setPayoutWalletNumber(e.target.value)}
+                      onBlur={() => setFieldError("payoutWalletNumber", vPayoutWalletNumber())}
+                      placeholder="03XXXXXXXXX"
+                    />
+                    <FieldError message={fieldErrors.payoutWalletNumber} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 6 — Review & Submit */}
+          {step === 6 && (
             <div className="space-y-5">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Review &amp; Submit</h2>
               <div className="grid sm:grid-cols-2 gap-4 text-sm">
@@ -583,9 +890,18 @@ const BecomeVendor = () => {
                   <p className="text-white">{form.contact_name}</p>
                   <p className="text-white/60">{form.order_email} · {form.mobile}</p>
                 </div>
-                <div className="bg-white/5 rounded-lg p-4 sm:col-span-2">
+                <div className="bg-white/5 rounded-lg p-4">
                   <p className="text-white/40 text-xs uppercase mb-1">Catalogue</p>
                   <p className="text-white">{items.length} item(s) · {documents.length} document(s) attached</p>
+                </div>
+                <div className="bg-white/5 rounded-lg p-4">
+                  <p className="text-white/40 text-xs uppercase mb-1">Payout Account</p>
+                  <p className="text-white">{payoutAccountTitle || "—"}</p>
+                  <p className="text-white/60 font-mono">
+                    {payoutMethod === "bank_account"
+                      ? `${payoutBankName || "—"} · •••• ${payoutIban.replace(/\s/g, "").slice(-4) || "----"}`
+                      : `${walletProviders.find((p) => p.value === payoutWalletProvider)?.label || "—"} · •••• ${payoutWalletNumber.slice(-4) || "----"}`}
+                  </p>
                 </div>
               </div>
 

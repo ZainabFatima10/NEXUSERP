@@ -17,6 +17,8 @@ NEXUSERP/
 ├── VENDOR_ONBOARDING.md           # vendor registration -> vetting -> approved catalogue (Phase 1)
 ├── SHIPMENT_ESCROW.md             # order -> accept -> on-chain contract -> ship -> approve -> execute (Phase 2)
 ├── NOTIFICATIONS.md               # notification engine, event catalogue, SSE, outbox (Phase 3)
+├── VEMA_AUTO_REORDER.md           # stock-scan -> proposal -> PM/Admin approval -> real order
+├── VENDOR_PAYOUT_ACCOUNTS.md      # verified, encrypted payout accounts -> step M (post-delivery payment release)
 ├── VEMA_BACKEND_WIRING.md         # voice/chat complaint pipeline, taxonomy, severity routing
 ├── CUSTOMER_PORTAL_WIRING.md      # customer-facing voice/chat intake UI
 ├── blockchain-module-main/
@@ -32,6 +34,8 @@ NEXUSERP/
 │   │   ├── vendor_orders.py, shipment_chain_service.py, payment_mock_service.py   # Phase 2
 │   │   ├── payments.py            # PKR payment methods, ledger, escrow -> capture -> vendor payout
 │   │   ├── payment_providers.py   # PAYMENT_PROVIDER: mock | manual (real Raast/IBFT transfers recorded by admin)
+│   │   ├── vema_reorder_service.py, vema_reorder_router.py   # stock-scan proposal + approval gate
+│   │   ├── vendor_payment_accounts.py, pk_banks.py   # verified payout accounts (step M), bank/wallet lists
 │   │   ├── taxonomy.py, stt_service.py, tts_service.py, llm_service.py,
 │   │   │   vema_orchestrator.py, reminder_scheduler.py, complaints.py
 │   │   ├── models/                # XGBoost training scripts + models/saved/*.pkl (gitignored)
@@ -97,7 +101,7 @@ migration must be idempotent and safe to re-run. Patterns already in use:
 (`sql.split(";")`) — **never put a literal `;` inside a SQL comment**, it
 will be treated as a statement boundary and crash the next startup.
 
-Next new migration should be `015_*.sql`.
+Next new migration should be `017_*.sql`.
 
 ## Known gotchas (found via live-testing against a real Postgres instance — worth re-checking if you touch nearby code)
 
@@ -184,6 +188,8 @@ npx hardhat run scripts/deploy.js --network localhost
 | Vendor registration, admin vetting, approved vendor catalogue | `VENDOR_ONBOARDING.md` |
 | Order -> accept -> on-chain contract -> ship -> approve -> execute, payment lifecycle | `SHIPMENT_ESCROW.md` |
 | Notification engine, event catalogue, SSE stream, outbox, preferences | `NOTIFICATIONS.md` |
+| VEMA stock-scan reorder proposals, vendor ranking, approval gate | `VEMA_AUTO_REORDER.md` |
+| Vendor payout accounts, encryption/masking, step M's destination resolver | `VENDOR_PAYOUT_ACCOUNTS.md` |
 | Complaint taxonomy, severity routing, reminder scheduler, STT/TTS/LLM | `VEMA_BACKEND_WIRING.md` |
 | What works in the VEMA pipeline + per-portal flow diagrams (status doc) | `blockchain-module-main/VEMA_PIPELINE.md` |
 | Customer-facing voice/chat portal | `CUSTOMER_PORTAL_WIRING.md` |

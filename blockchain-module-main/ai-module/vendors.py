@@ -43,6 +43,9 @@ from email_service import (
     send_vendor_needs_info_email,
 )
 from vendor_catalogue_parser import parse_catalogue_file, build_template_bytes
+import vendor_payment_accounts
+from vendor_payment_accounts import VendorPaymentAccountCreate
+from pk_banks import PK_BANKS, WALLET_PROVIDERS
 
 router = APIRouter(tags=["Vendors"])
 _staff = Depends(require_role(ROLE_PROCUREMENT_MANAGER))  # admin always implicitly included
@@ -155,6 +158,12 @@ class VendorApplicationPayload(BaseModel):
     # Step 5 — Catalogue (manual + upload rows already merged client-side)
     items: List[VendorApplicationItemIn] = []
 
+    # New "Payout Details" step — the verified destination for the
+    # post-delivery payment release (step M), distinct from the informal
+    # bank_name/bank_account_title/bank_iban above. See
+    # vendor_payment_accounts.py / VENDOR_PAYOUT_ACCOUNTS.md.
+    payout_account: VendorPaymentAccountCreate
+
     # Step 6 — Declaration
     consent: bool
     website_hp: Optional[str] = None  # honeypot — real users never see/fill this
@@ -189,6 +198,17 @@ def public_categories(db: Session = Depends(get_db)):
     """Inventory categories, read from the DB — not a hand-maintained parallel list."""
     rows = db.execute(text("SELECT DISTINCT category FROM inventory_items ORDER BY category")).scalars().all()
     return {"categories": list(rows)}
+
+
+@router.get("/api/public/vendors/banks")
+def public_banks():
+    """Maintained list for the Payout Details step's bank select."""
+    return {"banks": [{"value": k, "label": k} for k in PK_BANKS]}
+
+
+@router.get("/api/public/vendors/wallet-providers")
+def public_wallet_providers():
+    return {"providers": [{"value": k, "label": v} for k, v in WALLET_PROVIDERS.items()]}
 
 
 @router.get("/api/public/vendors/template")
@@ -406,6 +426,12 @@ async def apply_vendor(
             },
         )
 
+    # Payout account last, right before the single commit — if it fails
+    # validation or hits a duplicate IBAN/wallet number, nothing above
+    # (application, items, documents) is persisted either (see
+    # vendor_payment_accounts.create_payment_account_for_application).
+    vendor_payment_accounts.create_payment_account_for_application(db, application_id, app_payload.payout_account)
+
     db.commit()
 
     reference_code = db.execute(
@@ -520,6 +546,7 @@ def get_vendor_application(application_id: str, db: Session = Depends(get_db)):
     out["bank_iban"] = row["bank_iban"]
     out["items"] = [dict(i) for i in items]
     out["documents"] = [dict(d) for d in documents]
+    out["payment_account"] = vendor_payment_accounts.account_for_application(db, application_id)
     return out
 
 
@@ -568,6 +595,41 @@ def update_vetting_checklist(application_id: str, req: ChecklistUpdate, db: Sess
     return {"message": "Checklist updated"}
 
 
+@router.post("/api/vendor-applications/{application_id}/payment-account/reveal", dependencies=[_staff])
+def reveal_vendor_payment_account(
+    application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """Full (unmasked) payout identifier — admin/PM only, audit-logged."""
+    out = vendor_payment_accounts.reveal_account(db, application_id, user["id"])
+    db.commit()
+    return out
+
+
+@router.post("/api/vendor-applications/{application_id}/payment-account/verify", dependencies=[_staff])
+def verify_vendor_payment_account(
+    application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    vendor_payment_accounts.verify_account(db, application_id, user["id"])
+    db.commit()
+    return {"message": "Payout account verified."}
+
+
+class RejectPaymentAccountRequest(BaseModel):
+    reason: str
+
+
+@router.post("/api/vendor-applications/{application_id}/payment-account/reject", dependencies=[_staff])
+def reject_vendor_payment_account(
+    application_id: str, req: RejectPaymentAccountRequest,
+    user: dict = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    if not req.reason or not req.reason.strip():
+        raise HTTPException(400, "A reason is required")
+    vendor_payment_accounts.reject_account(db, application_id, user["id"], req.reason.strip())
+    db.commit()
+    return {"message": "Payout account rejected."}
+
+
 @router.post("/api/vendor-applications/{application_id}/approve", dependencies=[_staff])
 def approve_vendor_application(
     application_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)
@@ -579,6 +641,12 @@ def approve_vendor_application(
         raise HTTPException(404, "Application not found")
     if row["status"] not in ("pending", "needs_info"):
         raise HTTPException(400, f"Application is not pending (status: {row['status']})")
+    if not vendor_payment_accounts.is_verified_for_application(db, application_id):
+        raise HTTPException(
+            400,
+            "This vendor cannot be approved until their payout account is on file and marked 'verified' "
+            "(see the Payout Account panel below).",
+        )
 
     items = db.execute(
         text("SELECT * FROM vendor_application_items WHERE application_id = :id"), {"id": application_id}
@@ -652,6 +720,7 @@ def approve_vendor_application(
             """),
             {"uid": user["id"], "vid": vendor_id, "id": application_id},
         )
+        vendor_payment_accounts.reassign_to_vendor(db, application_id, vendor_id)
         db.commit()
     except Exception as e:
         db.rollback()

@@ -3,15 +3,18 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Loader2, Search, CheckCircle2, XCircle, Clock, HelpCircle, FileText,
-  Download, Mail, ShieldCheck,
+  Download, Mail, ShieldCheck, Wallet, Eye, EyeOff,
 } from "lucide-react";
 import {
   listVendorApplications, getVendorApplication, approveVendorApplication,
   rejectVendorApplication, requestVendorApplicationInfo, updateVendorApplicationChecklist,
   getVendorApplicationDocumentUrl,
-  VendorApplicationSummary, VendorApplicationDetail,
+  revealVendorPaymentAccount, verifyVendorPaymentAccount, rejectVendorPaymentAccount,
+  VendorApplicationSummary, VendorApplicationDetail, RevealedPayoutAccount,
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import FieldError from "@/components/FieldError";
+import { validate, required, errorInputClass } from "@/lib/validation";
 
 const TABS: { key: string; label: string }[] = [
   { key: "pending", label: "Pending" },
@@ -59,6 +62,19 @@ const VendorApplications = () => {
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [infoNote, setInfoNote] = useState("");
   const [showInfoModal, setShowInfoModal] = useState(false);
+  const [rejectReasonError, setRejectReasonError] = useState<string | null>(null);
+  const [infoNoteError, setInfoNoteError] = useState<string | null>(null);
+
+  const [revealed, setRevealed] = useState<RevealedPayoutAccount | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [payoutActing, setPayoutActing] = useState(false);
+  const [showPayoutRejectModal, setShowPayoutRejectModal] = useState(false);
+  const [payoutRejectReason, setPayoutRejectReason] = useState("");
+  const [payoutRejectReasonError, setPayoutRejectReasonError] = useState<string | null>(null);
+
+  const vRejectReason = () => validate(rejectReason, required("A reason is required"));
+  const vInfoNote = () => validate(infoNote, required("Please describe what's needed"));
+  const vPayoutRejectReason = () => validate(payoutRejectReason, required("A reason is required"));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +93,7 @@ const VendorApplications = () => {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
+    setRevealed(null);
     if (!selectedId) { setDetail(null); return; }
     setDetailLoading(true);
     getVendorApplication(selectedId)
@@ -102,7 +119,10 @@ const VendorApplications = () => {
   };
 
   const handleReject = async () => {
-    if (!detail || !rejectReason.trim()) return;
+    if (!detail) return;
+    const err = vRejectReason();
+    setRejectReasonError(err);
+    if (err) return;
     setActing(true);
     try {
       const res = await rejectVendorApplication(detail.id, rejectReason);
@@ -118,7 +138,10 @@ const VendorApplications = () => {
   };
 
   const handleRequestInfo = async () => {
-    if (!detail || !infoNote.trim()) return;
+    if (!detail) return;
+    const err = vInfoNote();
+    setInfoNoteError(err);
+    if (err) return;
     setActing(true);
     try {
       const res = await requestVendorApplicationInfo(detail.id, infoNote);
@@ -141,6 +164,52 @@ const VendorApplications = () => {
       await updateVendorApplicationChecklist(detail.id, next);
     } catch {
       refreshDetail();
+    }
+  };
+
+  const handleRevealPayout = async () => {
+    if (!detail) return;
+    if (revealed) { setRevealed(null); return; }
+    setRevealing(true);
+    try {
+      setRevealed(await revealVendorPaymentAccount(detail.id));
+    } catch (e: unknown) {
+      toast({ title: e instanceof Error ? e.message : "Could not reveal account details", variant: "destructive" });
+    } finally {
+      setRevealing(false);
+    }
+  };
+
+  const handleVerifyPayout = async () => {
+    if (!detail) return;
+    setPayoutActing(true);
+    try {
+      const res = await verifyVendorPaymentAccount(detail.id);
+      toast({ title: res.message });
+      refreshDetail();
+    } catch (e: unknown) {
+      toast({ title: e instanceof Error ? e.message : "Verification failed", variant: "destructive" });
+    } finally {
+      setPayoutActing(false);
+    }
+  };
+
+  const handleRejectPayout = async () => {
+    if (!detail) return;
+    const err = vPayoutRejectReason();
+    setPayoutRejectReasonError(err);
+    if (err) return;
+    setPayoutActing(true);
+    try {
+      const res = await rejectVendorPaymentAccount(detail.id, payoutRejectReason);
+      toast({ title: res.message });
+      setShowPayoutRejectModal(false);
+      setPayoutRejectReason("");
+      refreshDetail();
+    } catch (e: unknown) {
+      toast({ title: e instanceof Error ? e.message : "Rejection failed", variant: "destructive" });
+    } finally {
+      setPayoutActing(false);
     }
   };
 
@@ -232,18 +301,13 @@ const VendorApplications = () => {
                     </p>
                     <p className="text-muted-foreground">{detail.mobile}</p>
                   </div>
-                  <div>
+                  <div className="sm:col-span-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Commercial Terms</p>
                     <p className="text-muted-foreground">
                       Lead time: {detail.lead_time_days ?? "—"} days · Payment: {detail.payment_terms || "—"} ·
                       Min order: {detail.min_order_value != null ? `PKR ${detail.min_order_value.toLocaleString()}` : "—"}
                     </p>
                     {detail.certifications?.length > 0 && <p className="text-muted-foreground">Certifications: {detail.certifications.join(", ")}</p>}
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase mb-1">Bank (verification only)</p>
-                    <p className="text-muted-foreground">{detail.bank_name || "—"} · {detail.bank_account_title || "—"}</p>
-                    <p className="text-muted-foreground font-mono text-xs">{detail.bank_iban || "—"}</p>
                   </div>
                 </div>
 
@@ -306,6 +370,77 @@ const VendorApplications = () => {
                   </div>
                 </div>
 
+                <div className="border-t border-border pt-4">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase mb-2 flex items-center gap-1">
+                    <Wallet size={13} /> Payout Account
+                  </p>
+                  {!detail.payment_account ? (
+                    <p className="text-sm text-muted-foreground">No payout account on file.</p>
+                  ) : (
+                    <div className="bg-muted/30 rounded-lg p-3 space-y-2 text-sm">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <span className="font-medium">
+                          {detail.payment_account.account_title} ·{" "}
+                          {detail.payment_account.payout_method === "bank_account" ? "Bank Account" : "Mobile Wallet"}
+                        </span>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                          detail.payment_account.verification_status === "verified" ? "bg-success/10 text-success"
+                            : detail.payment_account.verification_status === "rejected" ? "bg-destructive/10 text-destructive"
+                            : "bg-warning/10 text-warning"
+                        }`}>
+                          {detail.payment_account.verification_status}
+                        </span>
+                      </div>
+                      <div className="text-muted-foreground font-mono text-xs space-y-0.5">
+                        {detail.payment_account.payout_method === "bank_account" ? (
+                          <>
+                            <p>{detail.payment_account.bank_name}{detail.payment_account.branch_code ? ` · branch ${detail.payment_account.branch_code}` : ""}</p>
+                            <p>IBAN: {revealed?.iban ?? detail.payment_account.iban_masked}</p>
+                            {(revealed?.account_number || detail.payment_account.account_number_masked) && (
+                              <p>Acct #: {revealed?.account_number ?? detail.payment_account.account_number_masked}</p>
+                            )}
+                          </>
+                        ) : (
+                          <p>
+                            {detail.payment_account.wallet_provider}: {revealed?.wallet_number ?? detail.payment_account.wallet_number_masked}
+                          </p>
+                        )}
+                      </div>
+                      {detail.payment_account.rejection_reason && (
+                        <p className="text-destructive text-xs">Rejected: {detail.payment_account.rejection_reason}</p>
+                      )}
+                      <div className="flex gap-2 flex-wrap pt-1">
+                        <button
+                          onClick={handleRevealPayout}
+                          disabled={revealing}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-border hover:bg-muted/50 disabled:opacity-50"
+                        >
+                          {revealing ? <Loader2 size={12} className="animate-spin" /> : revealed ? <EyeOff size={12} /> : <Eye size={12} />}
+                          {revealed ? "Hide" : "Reveal"}
+                        </button>
+                        {detail.payment_account.verification_status !== "verified" && (
+                          <button
+                            onClick={handleVerifyPayout}
+                            disabled={payoutActing}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-success text-white hover:opacity-90 disabled:opacity-50"
+                          >
+                            Verify
+                          </button>
+                        )}
+                        {detail.payment_account.verification_status !== "rejected" && (
+                          <button
+                            onClick={() => { setShowPayoutRejectModal(true); setPayoutRejectReasonError(null); }}
+                            disabled={payoutActing}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg bg-destructive text-white hover:opacity-90 disabled:opacity-50"
+                          >
+                            Reject
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {detail.rejection_reason && (
                   <div className="bg-destructive/10 text-destructive text-sm rounded-lg p-3">Rejected: {detail.rejection_reason}</div>
                 )}
@@ -318,11 +453,11 @@ const VendorApplications = () => {
                     <button onClick={handleApprove} disabled={acting} className="flex-1 py-2.5 rounded-lg bg-success text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
                       Approve
                     </button>
-                    <button onClick={() => setShowRejectModal(true)} disabled={acting} className="flex-1 py-2.5 rounded-lg bg-destructive text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                    <button onClick={() => { setShowRejectModal(true); setRejectReasonError(null); }} disabled={acting} className="flex-1 py-2.5 rounded-lg bg-destructive text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
                       Reject
                     </button>
                     {detail.status === "pending" && (
-                      <button onClick={() => setShowInfoModal(true)} disabled={acting} className="flex-1 py-2.5 rounded-lg border border-border text-sm font-medium hover:bg-muted/30 disabled:opacity-50">
+                      <button onClick={() => { setShowInfoModal(true); setInfoNoteError(null); }} disabled={acting} className="flex-1 py-2.5 rounded-lg border border-border text-sm font-medium hover:bg-muted/30 disabled:opacity-50">
                         Request Info
                       </button>
                     )}
@@ -342,9 +477,11 @@ const VendorApplications = () => {
             <h3 className="font-heading font-bold text-lg">Reject Application</h3>
             <textarea
               value={rejectReason} onChange={(e) => setRejectReason(e.target.value)}
+              onBlur={() => setRejectReasonError(vRejectReason())}
               placeholder="Reason (required — the vendor will see this)"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" rows={3}
+              className={`w-full px-3 py-2 text-sm rounded-lg border bg-muted/30 ${rejectReasonError ? errorInputClass : "border-border"}`} rows={3}
             />
+            <FieldError message={rejectReasonError} />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowRejectModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
               <button onClick={handleReject} disabled={!rejectReason.trim() || acting} className="px-4 py-2 text-sm rounded-lg bg-destructive text-white disabled:opacity-50">
@@ -361,13 +498,39 @@ const VendorApplications = () => {
             <h3 className="font-heading font-bold text-lg">Request More Information</h3>
             <textarea
               value={infoNote} onChange={(e) => setInfoNote(e.target.value)}
+              onBlur={() => setInfoNoteError(vInfoNote())}
               placeholder="What's missing or needs clarifying? (emailed to the vendor)"
-              className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" rows={3}
+              className={`w-full px-3 py-2 text-sm rounded-lg border bg-muted/30 ${infoNoteError ? errorInputClass : "border-border"}`} rows={3}
             />
+            <FieldError message={infoNoteError} />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowInfoModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
               <button onClick={handleRequestInfo} disabled={!infoNote.trim() || acting} className="px-4 py-2 text-sm rounded-lg bg-primary text-white disabled:opacity-50">
                 Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPayoutRejectModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
+            <h3 className="font-heading font-bold text-lg">Reject Payout Account</h3>
+            <p className="text-sm text-muted-foreground">
+              The vendor cannot be approved until a payout account is verified.
+            </p>
+            <textarea
+              value={payoutRejectReason} onChange={(e) => setPayoutRejectReason(e.target.value)}
+              onBlur={() => setPayoutRejectReasonError(vPayoutRejectReason())}
+              placeholder="Reason (required)"
+              className={`w-full px-3 py-2 text-sm rounded-lg border bg-muted/30 ${payoutRejectReasonError ? errorInputClass : "border-border"}`} rows={3}
+            />
+            <FieldError message={payoutRejectReasonError} />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowPayoutRejectModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
+              <button onClick={handleRejectPayout} disabled={!payoutRejectReason.trim() || payoutActing} className="px-4 py-2 text-sm rounded-lg bg-destructive text-white disabled:opacity-50">
+                Reject
               </button>
             </div>
           </div>

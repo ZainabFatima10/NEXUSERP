@@ -47,6 +47,7 @@ from rbac import require_role, ROLE_ADMIN, ROLE_PROCUREMENT_MANAGER, get_current
 from notification_engine import notify, auto_resolve
 from n8n_service import trigger_vendor_order_payment_released_email
 import payment_providers
+from vendor_payment_accounts import get_vendor_payout_destination, VendorPayoutAccountMissing
 
 router = APIRouter(tags=["Payments"])
 _admin = Depends(require_role(ROLE_ADMIN))
@@ -306,7 +307,29 @@ def release_payout(db: Session, order_id: str, actor_user_id: str = None) -> dic
         raise HTTPException(400, f"Payout is not scheduled (currently {order['payout_status']})")
 
     amount = float(order["vendor_payout_amount"] or order["subtotal"])
-    vendor = {"name": order["vendor_name"], "bank_iban": order["vendor_bank_iban"]}
+
+    # Step M's destination resolver — only a verified vendor_payment_accounts
+    # row (see vendor_payment_accounts.py) is paid out to. A missing/
+    # unverified account is the same "blocked, needs admin attention" shape
+    # the processors below already use for "no bank IBAN on file" — we just
+    # short-circuit before even calling the processor, since we already know
+    # the outcome.
+    try:
+        destination = get_vendor_payout_destination(db, order["vendor_id"])
+    except VendorPayoutAccountMissing as e:
+        db.execute(text("UPDATE vendor_orders SET payout_status = 'Failed', updated_at = NOW() WHERE id = :id"), {"id": order_id})
+        _log_txn(db, order_id, "payout", amount, "Failed", note=str(e), actor_user_id=actor_user_id)
+        notify(
+            db, "payment.failed", {"orderer_user_id": order["orderer_user_id"]},
+            title=f"Vendor Payout Blocked — {order['order_code']}",
+            body=f"{order['vendor_name']} has no verified payout account on file, so PKR {amount:,.2f} could not "
+                 f"be paid out for {order['order_code']}. Verify a payout account under Vendor Applications, then retry.",
+            entity_type="vendor_order", entity_id=str(order_id), action_path="/payments",
+            metadata={"order_id": str(order_id)},
+        )
+        return {"status": "Failed", "payout_ref": None, "error": str(e)}
+
+    vendor = {"name": order["vendor_name"], "bank_iban": destination["identifier"]}
     result = processor.payout(order["order_code"], amount, order["currency"], vendor)
 
     if result["status"] == "Paid":
@@ -316,8 +339,8 @@ def release_payout(db: Session, order_id: str, actor_user_id: str = None) -> dic
         notify(
             db, "payment.transfer_required", {"orderer_user_id": order["orderer_user_id"]},
             title=f"Send Vendor Payment — {order['order_code']}",
-            body=f"Transfer PKR {amount:,.2f} to {order['vendor_name']} (IBAN ending {(order['vendor_bank_iban'] or '')[-4:]}) "
-                 f"via Raast/IBFT, then record the bank transaction ID under Payments.",
+            body=f"Transfer PKR {amount:,.2f} to {order['vendor_name']} ({destination['payout_method'].replace('_', ' ')} "
+                 f"{destination['masked_identifier']}) via Raast/IBFT, then record the bank transaction ID under Payments.",
             entity_type="vendor_order", entity_id=str(order_id), action_path="/payments",
             metadata={"order_id": str(order_id)},
         )
