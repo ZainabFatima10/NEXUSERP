@@ -88,7 +88,7 @@ def trigger_vendor_reorder_email(
         "quantity":         float(order["quantity"]),
         "unit":             order["unit"],
         "vendor_name":      order["vendor_name"],
-        "vendor_email":     order["vendor_email"],
+        "vendor_email":     email_service.vendor_recipient(order["vendor_email"]),
         "expected_delivery": str(order["expected_delivery"]),
         "invoice":          invoice,
         "invoice_pdf_url":  invoice_pdf_url,
@@ -126,7 +126,7 @@ def trigger_contract_confirmation_email(
         "quantity":        float(order["quantity"]),
         "unit":            order["unit"],
         "vendor_name":     order["vendor_name"],
-        "vendor_email":    order["vendor_email"],
+        "vendor_email":    email_service.vendor_recipient(order["vendor_email"]),
         "invoice":         invoice,
         "invoice_pdf_url": invoice_pdf_url,
         "contract_hash":   contract_hash,
@@ -208,5 +208,37 @@ def trigger_vendor_order_payment_released_email(order: dict) -> dict:
         order["vendor_email"], order["vendor_name"], order["order_code"],
         float(order.get("vendor_payout_amount") or order["subtotal"]), "PKR",
         payout_ref=order.get("payout_ref"),
+    )
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}
+
+
+def trigger_vendor_order_cancelled_email(
+    order: dict,
+    items: list,
+    reason: str,
+    cancelled_by: str,
+    shipment_started: bool = False,
+) -> dict:
+    """Sent when an order is cancelled — by the orderer while awaiting the
+    vendor's response, or by an admin before arrival — with the reason."""
+    ok = email_service.send_vendor_order_cancelled_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"], items,
+        float(order["total_amount"]), order["currency"], reason, cancelled_by,
+        order["orderer_email"], shipment_started=shipment_started,
+    )
+    return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}
+
+
+def trigger_vendor_order_disputed_email(
+    order: dict,
+    items: list,
+    reason: str,
+    raised_by: str,
+) -> dict:
+    """Sent when the orderer disputes a delivery after arrival, with the reason."""
+    ok = email_service.send_vendor_order_disputed_email(
+        order["vendor_email"], order["vendor_name"], order["order_code"], items,
+        float(order["total_amount"]), order["currency"], reason, raised_by,
+        order["orderer_email"],
     )
     return {"status": "Sent" if ok else "Failed", "message_id": None, "response_body": "direct SMTP"}

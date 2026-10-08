@@ -59,6 +59,7 @@ function App() {
                 <Route path="inventory" element={<Inventory />} />
                 <Route path="demand-prediction" element={<DemandPrediction />} />
                 <Route path="procurement" element={<Procurement />} />
+                <Route path="approvals" element={<ApprovalsQueue />} />
                 <Route path="vendor-applications" element={<VendorApplications />} />
                 <Route path="vendor-catalogue" element={<VendorCatalogue />} />
                 <Route path="place-order" element={<PlaceVendorOrder />} />

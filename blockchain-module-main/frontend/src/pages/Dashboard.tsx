@@ -64,10 +64,11 @@ const Dashboard = () => {
           orders.status === "fulfilled"
             ? orders.value.orders.filter((o) => o.stage !== "Delivered" && o.stage !== "Cancelled").length
             : 0;
-        const todayRisk =
+        const today =
           forecast.status === "fulfilled" && forecast.value.forecast.length > 0
-            ? Math.round(forecast.value.forecast[0].outage_probability)
+            ? forecast.value.forecast[0]
             : null;
+        const todayRisk = today ? Math.round(today.outage_probability) : null;
         const unresolvedComplaints =
           complaints.status === "fulfilled"
             ? complaints.value.tickets.filter((c) => c.status === "open" || c.status === "escalated").length
@@ -82,7 +83,9 @@ const Dashboard = () => {
               label: "Outage Risk Today",
               value: todayRisk !== null ? `${todayRisk}%` : "—",
               icon: ShieldAlert,
-              color: todayRisk !== null && todayRisk >= 70 ? "text-destructive" : todayRisk !== null && todayRisk >= 40 ? "text-warning" : "text-success",
+              // Risk band comes from the backend (forecast.get_risk_level) so
+              // the tile always matches the Outage Prediction page.
+              color: today?.risk_level === "High" ? "text-destructive" : today?.risk_level === "Medium" ? "text-warning" : "text-success",
             },
           ]);
         }

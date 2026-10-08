@@ -3,6 +3,7 @@ NEXUS ERP — Email Service
 Handles vendor order emails and confirmation token flow.
 Uses smtplib with Gmail/SMTP. Configure via .env.
 """
+import html as html_lib
 import os
 import smtplib
 import secrets
@@ -20,11 +21,25 @@ SMTP_USER     = os.getenv("SMTP_USER", "")           # your Gmail
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")       # App password
 FROM_NAME     = os.getenv("FROM_NAME", "NEXUS ERP — PowerGrid Optimizer")
 BASE_URL      = os.getenv("BASE_URL", "http://localhost:8000")
+# Demo switch: when set, every email meant for a vendor (orders, reorders,
+# cancellations, disputes, payouts, onboarding) goes to this one address
+# instead of the vendor's real one. Staff/customer emails are unaffected.
+# Leave unset in normal use — vendors' stored emails are never changed.
+VENDOR_EMAIL_OVERRIDE = os.getenv("VENDOR_EMAIL_OVERRIDE", "").strip()
 
 
 def generate_confirm_token() -> str:
     """Generate a cryptographically secure confirmation token."""
     return secrets.token_urlsafe(32)
+
+
+def vendor_recipient(vendor_email: str) -> str:
+    """Where a vendor-bound email actually goes (see VENDOR_EMAIL_OVERRIDE)."""
+    return VENDOR_EMAIL_OVERRIDE or vendor_email
+
+
+def _send_to_vendor(vendor_email: str, subject: str, html_body: str) -> bool:
+    return _send(vendor_recipient(vendor_email), subject, html_body)
 
 
 def _send(to_email: str, subject: str, html_body: str) -> bool:
@@ -123,7 +138,7 @@ def send_vendor_order_email(
     </div>
     </body></html>
     """
-    return _send(
+    return _send_to_vendor(
         vendor_email,
         f"Purchase Order {order_code} — Action Required",
         html,
@@ -161,7 +176,7 @@ def send_contract_ready_email(
       </div>
     </div></body></html>
     """
-    return _send(
+    return _send_to_vendor(
         vendor_email,
         f"Smart Contract Created — Order {order_code}",
         html,
@@ -207,7 +222,7 @@ def send_delivery_notification_email(
       </div>
     </div></body></html>
     """
-    return _send(
+    return _send_to_vendor(
         vendor_email,
         f"Delivery Received — Order {order_code}",
         html,
@@ -284,7 +299,7 @@ def send_vendor_email_verification(
       </div>
     </div></body></html>
     """
-    return _send(to_email, "Confirm your order email — NEXUS ERP Vendor Registration", html)
+    return _send_to_vendor(to_email, "Confirm your order email — NEXUS ERP Vendor Registration", html)
 
 
 def send_vendor_application_ack(
@@ -319,7 +334,7 @@ def send_vendor_application_ack(
       </div>
     </div></body></html>
     """
-    return _send(to_email, f"Application Received — {reference_code}", html)
+    return _send_to_vendor(to_email, f"Application Received — {reference_code}", html)
 
 
 def send_vendor_approved_email(
@@ -347,7 +362,7 @@ def send_vendor_approved_email(
       </div>
     </div></body></html>
     """
-    return _send(to_email, "Vendor Application Approved — NEXUS ERP", html)
+    return _send_to_vendor(to_email, "Vendor Application Approved — NEXUS ERP", html)
 
 
 def send_vendor_rejected_email(
@@ -378,7 +393,7 @@ def send_vendor_rejected_email(
       </div>
     </div></body></html>
     """
-    return _send(to_email, "Vendor Application — Update", html)
+    return _send_to_vendor(to_email, "Vendor Application — Update", html)
 
 
 def send_vendor_needs_info_email(
@@ -410,7 +425,7 @@ def send_vendor_needs_info_email(
       </div>
     </div></body></html>
     """
-    return _send(to_email, "Action Needed on Your Vendor Application — NEXUS ERP", html)
+    return _send_to_vendor(to_email, "Action Needed on Your Vendor Application — NEXUS ERP", html)
 
 
 def send_vendor_order_placed_email(
@@ -478,7 +493,7 @@ def send_vendor_order_placed_email(
       </div>
     </div></body></html>
     """
-    return _send(vendor_email, f"Purchase Order {order_code} — Action Required", html)
+    return _send_to_vendor(vendor_email, f"Purchase Order {order_code} — Action Required", html)
 
 
 def send_vendor_order_shipment_link_email(
@@ -515,7 +530,7 @@ def send_vendor_order_shipment_link_email(
       </div>
     </div></body></html>
     """
-    return _send(vendor_email, f"Order {order_code} Accepted — Your Shipment Update Link", html)
+    return _send_to_vendor(vendor_email, f"Order {order_code} Accepted — Your Shipment Update Link", html)
 
 
 def send_vendor_order_status_checkin_email(
@@ -554,7 +569,7 @@ def send_vendor_order_status_checkin_email(
       </div>
     </div></body></html>
     """
-    return _send(vendor_email, f"Quick check-in — what's the status of order {order_code}?", html)
+    return _send_to_vendor(vendor_email, f"Quick check-in — what's the status of order {order_code}?", html)
 
 
 def send_vendor_order_payment_released_email(
@@ -590,7 +605,129 @@ def send_vendor_order_payment_released_email(
       </div>
     </div></body></html>
     """
-    return _send(vendor_email, f"Payment Released — Order {order_code}", html)
+    return _send_to_vendor(vendor_email, f"Payment Released — Order {order_code}", html)
+
+
+def _vendor_order_items_table(items: list, currency: str) -> str:
+    rows = "".join(
+        f"""<tr style="{'background:#f0f4fb;' if i % 2 else ''}">
+              <td style="padding:10px 14px;">{html_lib.escape(str(it['name']))}</td>
+              <td style="padding:10px 14px;">{it['quantity']:,.0f} {html_lib.escape(str(it['unit']))}</td>
+              <td style="padding:10px 14px;">{currency} {it['line_total']:,.2f}</td>
+            </tr>"""
+        for i, it in enumerate(items)
+    )
+    return f"""
+        <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:13px;">
+          <tr style="text-align:left;color:#001F54;">
+            <th style="padding:8px 14px;">Item</th><th style="padding:8px 14px;">Qty</th>
+            <th style="padding:8px 14px;">Total</th>
+          </tr>
+          {rows}
+        </table>"""
+
+
+def send_vendor_order_cancelled_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    items: list,
+    total_amount: float,
+    currency: str,
+    reason: str,
+    cancelled_by: str,
+    contact_email: str,
+    shipment_started: bool = False,
+) -> bool:
+    """Sent when the orderer cancels an order still awaiting the vendor's
+    response, or an admin cancels an accepted, not-yet-arrived contract
+    (vendor_orders.py). `reason` is user-entered, so it is HTML-escaped."""
+    next_steps = (
+        "The smart contract has been cancelled on-chain and the payment hold has been released. "
+        "Please <b>stop any dispatch</b> for this order. If goods are already on the way, reply to "
+        f"<a href=\"mailto:{html_lib.escape(contact_email)}\">{html_lib.escape(contact_email)}</a> "
+        "to arrange their return."
+        if shipment_started else
+        "No action is needed from you — the Accept/Reject link we sent earlier no longer works, "
+        "and nothing will be shipped or paid for under this order."
+    )
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Order Cancelled — {order_code}</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Cancellation Notice</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{html_lib.escape(vendor_name)}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          We're writing to let you know that order <b>{order_code}</b>
+          ({currency} {total_amount:,.2f}) has been cancelled by
+          <b>{html_lib.escape(cancelled_by)}</b>.
+        </p>
+        <div style="background:#fdf2f2;border:1px solid #f5c6c6;border-radius:12px;padding:16px 20px;margin:20px 0;">
+          <p style="color:#b91c1c;font-weight:700;margin:0 0 6px;font-size:14px;">Reason for cancellation</p>
+          <p style="color:#555;margin:0;line-height:1.6;white-space:pre-wrap;">{html_lib.escape(reason)}</p>
+        </div>
+        {_vendor_order_items_table(items, currency)}
+        <p style="color:#555;line-height:1.6;">{next_steps}</p>
+        <p style="color:#888;font-size:12px;">
+          Questions? Contact {html_lib.escape(cancelled_by)} at
+          <a href="mailto:{html_lib.escape(contact_email)}">{html_lib.escape(contact_email)}</a>.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send_to_vendor(vendor_email, f"Order {order_code} has been cancelled", html)
+
+
+def send_vendor_order_disputed_email(
+    vendor_email: str,
+    vendor_name: str,
+    order_code: str,
+    items: list,
+    total_amount: float,
+    currency: str,
+    reason: str,
+    raised_by: str,
+    contact_email: str,
+) -> bool:
+    """Sent when the orderer raises a dispute after confirming arrival
+    (vendor_orders.dispute_endpoint). `reason` is user-entered, so it is
+    HTML-escaped."""
+    html = f"""
+    <!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f4f7fb;padding:32px;">
+    <div style="max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;
+                box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+      <div style="background:#001F54;padding:24px 32px;">
+        <h2 style="color:#fff;margin:0;font-size:20px;">Delivery Disputed — {order_code}</h2>
+        <p style="color:#a8c4e8;margin:4px 0 0;font-size:13px;">NEXUS ERP · Dispute Notice</p>
+      </div>
+      <div style="padding:32px;">
+        <p style="color:#333;">Dear <b>{html_lib.escape(vendor_name)}</b>,</p>
+        <p style="color:#555;line-height:1.6;">
+          <b>{html_lib.escape(raised_by)}</b> has raised a dispute on the delivery for order
+          <b>{order_code}</b> ({currency} {total_amount:,.2f}) after inspecting the goods.
+        </p>
+        <div style="background:#fff8e6;border:1px solid #f5dd9c;border-radius:12px;padding:16px 20px;margin:20px 0;">
+          <p style="color:#a16207;font-weight:700;margin:0 0 6px;font-size:14px;">Reason for dispute</p>
+          <p style="color:#555;margin:0;line-height:1.6;white-space:pre-wrap;">{html_lib.escape(reason)}</p>
+        </div>
+        {_vendor_order_items_table(items, currency)}
+        <p style="color:#555;line-height:1.6;">
+          <b>What happens now:</b> the smart contract is frozen and payment is on hold while a
+          NEXUS ERP admin reviews the dispute. The admin will either accept the delivery, ask for
+          it to be corrected, or cancel the order — you'll be contacted with the outcome.
+        </p>
+        <p style="color:#555;line-height:1.6;">
+          To share your side (delivery notes, photos, proof of condition), reply to
+          <a href="mailto:{html_lib.escape(contact_email)}">{html_lib.escape(contact_email)}</a>.
+        </p>
+      </div>
+    </div></body></html>
+    """
+    return _send_to_vendor(vendor_email, f"Dispute raised on order {order_code} — action may be needed", html)
 
 
 def send_internal_notification_email(

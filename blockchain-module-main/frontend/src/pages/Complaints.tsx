@@ -4,6 +4,7 @@ import { CheckCircle2, AlertTriangle, Mic, X, Loader2 } from "lucide-react";
 import { Complaint, getComplaints, resolveComplaint } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 
+import ModalPortal from "@/components/ModalPortal";
 const severityStyle: Record<string, string> = {
   critical: "bg-destructive/10 text-destructive",
   medium: "bg-warning/10 text-warning",
@@ -202,7 +203,7 @@ const Complaints = () => {
 
       {/* Resolve modal */}
       {resolving && (
-        <div
+        <ModalPortal><div
           className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
           onClick={() => setResolving(null)}
         >
@@ -231,7 +232,7 @@ const Complaints = () => {
               Confirm Resolution
             </button>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

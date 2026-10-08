@@ -7,13 +7,11 @@ import {
 } from "lucide-react";
 import { getDemandForecast, DemandForecastResponse, DemandPredictionItem } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import { STOCK_STATUS_BADGE } from "@/lib/stockThresholds";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
-    OK: "bg-success/10 text-success",
-    Low: "bg-warning/10 text-warning",
-    Critical: "bg-destructive/10 text-destructive",
-    "Out of Stock": "bg-destructive text-destructive-foreground",
+    ...STOCK_STATUS_BADGE,
     Unknown: "bg-muted text-muted-foreground",
   };
   return (

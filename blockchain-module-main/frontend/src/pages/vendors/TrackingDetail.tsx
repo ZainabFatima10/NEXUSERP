@@ -20,6 +20,7 @@ import { formatPKR } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
+import ModalPortal from "@/components/ModalPortal";
 const PROGRESS_STEPS = [
   { key: "PLACED", label: "Order Placed" },
   { key: "NOTIFIED", label: "Vendor Notified" },
@@ -173,6 +174,8 @@ const TrackingDetail = () => {
   const [showStaffCheckpoint, setShowStaffCheckpoint] = useState(false);
   const [showCancelContract, setShowCancelContract] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  const [showCancelOrder, setShowCancelOrder] = useState(false);
+  const [cancelOrderReason, setCancelOrderReason] = useState("");
   const [staffLocation, setStaffLocation] = useState("");
   const [staffNote, setStaffNote] = useState("");
   const [staffStatus, setStaffStatus] = useState<"InTransit" | "OutForDelivery">("InTransit");
@@ -349,14 +352,33 @@ const TrackingDetail = () => {
           <p className="text-sm text-muted-foreground">
             Waiting for {order.vendor_name} to respond (expires {new Date(order.expires_at).toLocaleString()}).
           </p>
-          <div className="flex gap-2">
-            <button onClick={() => run(() => resendVendorOrderRequest(order.id))} disabled={acting} className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg border border-border hover:bg-muted/30 disabled:opacity-50">
-              <Mail size={14} /> Resend Request
-            </button>
-            <button onClick={() => run(() => cancelVendorOrder(order.id))} disabled={acting} className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50">
-              <Ban size={14} /> Cancel Order
-            </button>
-          </div>
+          {!showCancelOrder ? (
+            <div className="flex gap-2">
+              <button onClick={() => run(() => resendVendorOrderRequest(order.id))} disabled={acting} className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg border border-border hover:bg-muted/30 disabled:opacity-50">
+                <Mail size={14} /> Resend Request
+              </button>
+              <button onClick={() => setShowCancelOrder(true)} disabled={acting} className="flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 disabled:opacity-50">
+                <Ban size={14} /> Cancel Order
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {order.vendor_name} will be emailed that this order is cancelled, with your reason.
+              </p>
+              <textarea value={cancelOrderReason} onChange={(e) => setCancelOrderReason(e.target.value)} rows={3} placeholder="Reason for cancellation (required, sent to the vendor)" className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
+              <div className="flex gap-2 justify-end">
+                <button onClick={() => { setShowCancelOrder(false); setCancelOrderReason(""); }} className="text-sm px-4 py-2 rounded-lg border border-border">Back</button>
+                <button
+                  onClick={async () => { await run(() => cancelVendorOrder(order.id, cancelOrderReason.trim())); setShowCancelOrder(false); setCancelOrderReason(""); }}
+                  disabled={acting || !cancelOrderReason.trim()}
+                  className="flex items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-lg bg-destructive text-white disabled:opacity-50"
+                >
+                  <Ban size={14} /> Cancel order &amp; notify vendor
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -413,6 +435,13 @@ const TrackingDetail = () => {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {order.cancellation_reason && (order.status === "CANCELLED" || order.contract_status === "Cancelled") && (
+        <div className="glass-card p-5">
+          <p className="text-sm font-medium text-destructive">Cancelled: {order.cancellation_reason}</p>
+          <p className="text-xs text-muted-foreground mt-1">This reason was emailed to {order.vendor_name}.</p>
         </div>
       )}
 
@@ -473,7 +502,7 @@ const TrackingDetail = () => {
 
       {/* Approve confirmation modal */}
       {showApproveModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Approve Receipt?</h3>
             <p className="text-sm text-muted-foreground">
@@ -494,15 +523,15 @@ const TrackingDetail = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* Dispute modal */}
       {showDisputeModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Raise Dispute</h3>
-            <textarea value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} placeholder="What's wrong with this delivery?" rows={3} className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
+            <textarea value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} placeholder="What's wrong with this delivery? (sent to the vendor)" rows={3} className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowDisputeModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
               <button
@@ -514,12 +543,12 @@ const TrackingDetail = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
 
       {/* Resolve dispute modal (admin) */}
       {showResolveModal && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+        <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Resolve Dispute</h3>
             <div className="flex flex-col gap-2">
@@ -535,7 +564,7 @@ const TrackingDetail = () => {
             </div>
             <button onClick={() => setShowResolveModal(false)} className="text-sm text-muted-foreground">Close</button>
           </div>
-        </div>
+        </div></ModalPortal>
       )}
     </div>
   );

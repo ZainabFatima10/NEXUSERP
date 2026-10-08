@@ -6,6 +6,7 @@ import {
 import { Complaint, ComplaintEvent, getComplaint, resolveComplaint, escalateComplaint } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 
+import ModalPortal from "@/components/ModalPortal";
 const severityStyle: Record<string, string> = {
   critical: "bg-destructive/10 text-destructive",
   medium: "bg-warning/10 text-warning",
@@ -84,7 +85,7 @@ const TicketDetailModal = ({ ticketId, onClose, onUpdated }: Props) => {
   };
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <ModalPortal><div className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
         className="glass-card w-full max-w-2xl max-h-[85vh] flex flex-col animate-slide-up"
         onClick={(e) => e.stopPropagation()}
@@ -197,7 +198,7 @@ const TicketDetailModal = ({ ticketId, onClose, onUpdated }: Props) => {
           </>
         )}
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Package, CloudLightning, MessageSquare,
   Bell, ChevronLeft, ChevronRight, ChevronDown, LogOut, TrendingUp, ShoppingCart, BookOpen, Database,
-  UserCheck, Store, Truck, Wallet,
+  UserCheck, Store, Truck, Wallet, ClipboardCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -58,6 +58,7 @@ export const ADMIN_NAV_SECTIONS: NavSection[] = [
     items: [
       { to: "/admin/inventory", label: "Inventory", icon: Package },
       { to: "/admin/procurement", label: "Procurement", icon: ShoppingCart },
+      { to: "/admin/approvals", label: "Reorder Approvals", icon: ClipboardCheck },
       { to: "/admin/tracking", label: "Order Tracking", icon: Truck },
     ],
   },

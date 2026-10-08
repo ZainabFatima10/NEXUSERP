@@ -14,7 +14,7 @@ import os, secrets, uuid, json
 from datetime import datetime, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
@@ -40,6 +40,7 @@ from notification_service import (
 )
 from n8n_service import trigger_vendor_reorder_email, trigger_contract_confirmation_email
 from rbac import require_role, ROLE_PROCUREMENT_MANAGER, get_current_user
+from stock_thresholds import stock_status
 
 router = APIRouter(prefix="/api/procurement", tags=["Procurement"])
 _pm = Depends(require_role(ROLE_PROCUREMENT_MANAGER))
@@ -53,8 +54,8 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
 class CreateOrderRequest(BaseModel):
     item_id:           str
-    quantity:          float
-    unit_price:        Optional[float] = None
+    quantity:          float = Field(gt=0)            # no zero/negative orders (or totals)
+    unit_price:        Optional[float] = Field(default=None, ge=0)
     trigger_type:      str = "Manual"    # VEMA-Triggered | Auto-Generated | Manual
     triggered_by:      Optional[str] = None
     expected_delivery: Optional[str] = None   # YYYY-MM-DD, default +14 days
@@ -63,7 +64,7 @@ class CreateOrderRequest(BaseModel):
 class DeliveryCheckinRequest(BaseModel):
     location:          Optional[str] = "Main Warehouse"
     status:            str            # Arrived at Warehouse | Inspected | Accepted | Rejected
-    quantity_received: float
+    quantity_received: float = Field(ge=0)
     condition:         str            # Good | Partial | Damaged
     notes:             Optional[str] = None
     is_final:          bool = False
@@ -77,8 +78,8 @@ class SignContractRequest(BaseModel):
 
 class ManualReorderRequest(BaseModel):
     item_id:    str
-    quantity:   float
-    unit_price: Optional[float] = None
+    quantity:   float = Field(gt=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -125,14 +126,21 @@ def _update_inventory_status(db: Session, item_id: str):
     ).mappings().first()
     if not item:
         return
-    s = item["current_stock"]
-    mn = item["min_threshold"]
-    cr = item["critical_threshold"]
-    status = "Critical" if s <= cr else "Low" if s < mn else "OK"
+    status = stock_status(item["current_stock"], item["min_threshold"])
     db.execute(
         text("UPDATE inventory_items SET status=:s, last_updated=NOW() WHERE item_id=:id"),
         {"s": status, "id": item_id},
     )
+
+
+def _validate_order_amounts(quantity: float, unit_price: Optional[float] = None):
+    """Same rules as the frontend's src/lib/validation.ts — plain 400s so the
+    UI's apiFetch can show the message (a pydantic 422 detail is a list)."""
+    if quantity is None or quantity <= 0:
+        raise HTTPException(400, "Quantity cannot be negative" if quantity is not None and quantity < 0
+                            else "Quantity must be greater than 0")
+    if unit_price is not None and unit_price < 0:
+        raise HTTPException(400, "Unit price cannot be negative")
 
 
 def _order_to_dict(row: dict) -> dict:
@@ -153,6 +161,7 @@ def _order_to_dict(row: dict) -> dict:
 
 @router.post("/orders", dependencies=[_pm])
 def create_order(req: CreateOrderRequest, db: Session = Depends(get_db)):
+    _validate_order_amounts(req.quantity, req.unit_price)
     item = _get_item(db, req.item_id)
     if not item.get("vendor_name"):
         raise HTTPException(400, "Item has no vendor assigned")
@@ -494,6 +503,8 @@ def delivery_checkin(
     req: DeliveryCheckinRequest,
     db: Session = Depends(get_db),
 ):
+    if req.quantity_received < 0:
+        raise HTTPException(400, "Quantity received cannot be negative")
     order = _get_order(db, order_id)
 
     checkin_id = str(uuid.uuid4())
@@ -667,6 +678,7 @@ def get_checkins(order_id: str, db: Session = Depends(get_db)):
 
 @router.post("/manual-reorder", dependencies=[_pm])
 def manual_reorder(req: ManualReorderRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    _validate_order_amounts(req.quantity, req.unit_price)
     item = _get_item(db, req.item_id)
     return create_order(
         CreateOrderRequest(
@@ -708,45 +720,130 @@ def get_order_invoice_pdf(order_id: str, db: Session = Depends(get_db)):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# AUTOMATED REORDERING — Procurement Manager approval workflow
-# (Section 3). Triggered by inventory_v2.run_inventory_check() when an
-# item's stock falls to/below its critical_threshold (<=20% of
-# min_threshold). Reuses create_smart_contract / execute_contract /
-# reject_contract / generate_invoice_data / generate_invoice_pdf as-is —
-# nothing in contract_service.py or invoice_service.py is touched here.
+# AUTOMATED REORDERING — Admin / Procurement Manager approval workflow
+# (Section 3). Triggered by inventory_v2.run_inventory_check() for every
+# auto-reorder trigger — Critical (<=20% of min_threshold), Low, and
+# Demand > Stock — so no vendor is ever emailed without a human sign-off.
+# Reuses create_smart_contract / execute_contract / reject_contract /
+# generate_invoice_data / generate_invoice_pdf as-is — nothing in
+# contract_service.py or invoice_service.py is touched here.
 #
 # Lifecycle:
-#   below-20% trigger -> smart contract created, stage='Pending PM Approval'
-#     -> PM approves   -> n8n emails vendor an Accept/Reject link, stage='Vendor Notified'
-#        PM rejects    -> contract rejected, stage='Cancelled by PM'
+#   auto trigger -> cheapest vendor picked, smart contract created, stage='Pending PM Approval'
+#     -> Admin/PM approves -> n8n emails vendor an Accept/Reject link, stage='Vendor Notified'
+#        Admin/PM rejects  -> contract rejected, stage='Cancelled by PM'
 #     -> vendor Accept -> contract executed, stage='Order Placed'
 #        vendor Reject -> contract rejected, stage='Vendor Rejected' (needs manual follow-up)
 # ────────────────────────────────────────────────────────────────────────────
 
-def create_pending_approval_order(db: Session, item: dict) -> dict:
+def select_lowest_price_vendor(db: Session, item: dict, quantity: float) -> Optional[dict]:
     """
-    Called from inventory_v2.run_inventory_check() for the <20% trigger.
-    Creates the order + smart contract immediately, but does NOT email the
-    vendor yet — that only happens once a Procurement Manager approves it.
+    Pick the vendor to reorder `item` from: the one with the lowest unit
+    price among the item's default vendor (inventory_items.vendor_id at
+    inventory_items.unit_price) and every active approved vendor whose
+    catalogue (vendor_items) carries the same item in the same unit and
+    whose MOQ the reorder quantity meets. A catalogue row matches via its
+    inventory_item_id link, or — if unlinked — by exact case-insensitive
+    name. Ties go to the default vendor, then the shorter lead time.
+
+    Returns {"vendor_id", "vendor_name", "vendor_email", "unit_price",
+    "source", "vendor_item_id", "lead_time_days", "candidates": [...]}
+    or None when no vendor can supply the item.
     """
-    if not item.get("vendor_name"):
-        return {"skipped": True, "reason": "no vendor assigned"}
+    candidates = []
+
+    if item.get("vendor_id"):
+        default = db.execute(
+            text("""
+                SELECT id, name, email FROM vendors
+                WHERE id = :id AND COALESCE(status, 'active') = 'active'
+                  AND COALESCE(is_active, TRUE)
+            """),
+            {"id": item["vendor_id"]},
+        ).mappings().first()
+        if default:
+            candidates.append({
+                "vendor_id": str(default["id"]), "vendor_name": default["name"],
+                "vendor_email": default["email"],
+                "unit_price": float(item["unit_price"]) if item.get("unit_price") is not None else None,
+                "source": "inventory_default", "vendor_item_id": None, "lead_time_days": None,
+            })
+
+    rows = db.execute(
+        text("""
+            SELECT vi.id AS vendor_item_id, vi.unit_price, vi.lead_time_days,
+                   v.id AS vendor_id, v.name AS vendor_name, v.email AS vendor_email
+            FROM vendor_items vi
+            JOIN vendors v ON v.id = vi.vendor_id
+            WHERE vi.is_active = TRUE
+              AND v.status = 'active' AND COALESCE(v.is_active, TRUE)
+              AND (vi.inventory_item_id = :item_id
+                   OR (vi.inventory_item_id IS NULL AND LOWER(TRIM(vi.name)) = LOWER(TRIM(:name))))
+              AND LOWER(TRIM(vi.unit)) = LOWER(TRIM(:unit))
+              AND (vi.moq IS NULL OR vi.moq <= :qty)
+        """),
+        {"item_id": item["item_id"], "name": item["name"], "unit": item["unit"], "qty": float(quantity)},
+    ).mappings().all()
+    for r in rows:
+        candidates.append({
+            "vendor_id": str(r["vendor_id"]), "vendor_name": r["vendor_name"],
+            "vendor_email": r["vendor_email"], "unit_price": float(r["unit_price"]),
+            "source": "vendor_catalogue", "vendor_item_id": str(r["vendor_item_id"]),
+            "lead_time_days": r["lead_time_days"],
+        })
+
+    if not candidates:
+        return None
+
+    def _rank(c: dict):
+        return (
+            c["unit_price"] is None,                     # priced offers first
+            c["unit_price"] if c["unit_price"] is not None else 0,
+            c["source"] != "inventory_default",          # tie -> default vendor
+            c["lead_time_days"] if c["lead_time_days"] is not None else float("inf"),
+        )
+
+    # One entry per vendor (its cheapest offer), cheapest vendor first.
+    best_per_vendor: dict = {}
+    for c in sorted(candidates, key=_rank):
+        best_per_vendor.setdefault(c["vendor_id"], c)
+    ranked = list(best_per_vendor.values())
+
+    return {**ranked[0], "candidates": ranked}
+
+
+def create_pending_approval_order(
+    db: Session,
+    item: dict,
+    trigger_type: str = "VEMA-Triggered",
+    reason: str = "stock below 21% of min_threshold",
+) -> dict:
+    """
+    Called from inventory_v2.run_inventory_check() for every auto-reorder
+    trigger. Picks the lowest-unit-price vendor, creates the order + smart
+    contract immediately, but does NOT email the vendor yet — that only
+    happens once an Admin or Procurement Manager approves it.
+    """
+    quantity = item["reorder_quantity"]
+    selection = select_lowest_price_vendor(db, item, quantity)
+    if not selection:
+        return {"skipped": True, "item_id": item["item_id"], "reason": "no vendor supplies this item"}
 
     order_id   = str(uuid.uuid4())
     order_code = "ORD-" + uuid.uuid4().hex[:6].upper()
-    quantity   = item["reorder_quantity"]
-    unit_price = item.get("unit_price")
+    unit_price = selection["unit_price"]
     total_price = round(float(quantity) * float(unit_price), 2) if unit_price is not None else None
     delivery_date = (datetime.now() + timedelta(days=14)).strftime("%Y-%m-%d")
+    below_20pct = item.get("status") in ("Critical", "Out of Stock")
 
     contract = create_smart_contract(
         order_code        = order_code,
         item_name         = item["name"],
         quantity          = float(quantity),
         unit              = item["unit"],
-        vendor_name       = item["vendor_name"],
-        vendor_email      = item["vendor_email"],
-        unit_price        = float(unit_price) if unit_price is not None else None,
+        vendor_name       = selection["vendor_name"],
+        vendor_email      = selection["vendor_email"],
+        unit_price        = unit_price,
         expected_delivery = delivery_date,
     )
 
@@ -758,24 +855,30 @@ def create_pending_approval_order(db: Session, item: dict) -> dict:
               expected_delivery, tracking_events,
               below_20pct_trigger, pm_approval_status,
               contract_status, contract_hash, smart_contract_data,
-              created_at, updated_at
+              vendor_selection, created_at, updated_at
             ) VALUES (
               :id, :code, :item_id, :vendor_id, :qty, :unit,
-              :unit_price, :total_price, 'VEMA-Triggered', 'Pending PM Approval',
+              :unit_price, :total_price, :trigger, 'Pending PM Approval',
               :delivery, '[]'::jsonb,
-              TRUE, 'Pending',
+              :below_20pct, 'Pending',
               'Pending', :hash, CAST(:contract_data AS jsonb),
-              NOW(), NOW()
+              CAST(:selection AS jsonb), NOW(), NOW()
             )
         """),
         {
             "id": order_id, "code": order_code,
-            "item_id": item["item_id"], "vendor_id": item["vendor_id"],
+            "item_id": item["item_id"], "vendor_id": selection["vendor_id"],
             "qty": quantity, "unit": item["unit"],
             "unit_price": unit_price, "total_price": total_price,
+            "trigger": trigger_type, "below_20pct": below_20pct,
             "delivery": delivery_date,
             "hash": contract["contract_hash"],
             "contract_data": json.dumps(contract["contract_data"]),
+            "selection": json.dumps({
+                "rule": "lowest_unit_price",
+                "selected_vendor_id": selection["vendor_id"],
+                "candidates": selection["candidates"],
+            }),
         },
     )
     db.execute(
@@ -786,24 +889,43 @@ def create_pending_approval_order(db: Session, item: dict) -> dict:
         {
             "id": str(uuid.uuid4()), "oid": order_id,
             "hash": contract["contract_hash"], "block": contract["block_number"],
-            "payload": json.dumps({"reason": "stock <= 20% of min_threshold"}),
+            "payload": json.dumps({
+                "reason": reason,
+                "vendor_selection": f"lowest unit price of {len(selection['candidates'])} vendor(s)",
+            }),
         },
     )
     db.commit()
 
-    notify_role(
-        db, ROLE_PROCUREMENT_MANAGER,
-        category    = "Procurement Approvals",
-        title       = f"Reorder Approval Needed — {item['name']}",
-        description = (
-            f"{item['name']} stock is at {item['current_stock']} {item['unit']} "
-            f"(<=20% of minimum threshold). A smart contract order for "
-            f"{quantity} {item['unit']} from {item['vendor_name']} is awaiting your approval."
-        ),
-        metadata    = {"order_id": order_id, "order_code": order_code, "item_id": item["item_id"]},
+    n_vendors = len(selection["candidates"])
+    price_note = (
+        f" — lowest unit price of {n_vendors} vendors"
+        if n_vendors > 1 else ""
     )
+    for role in (ROLE_PROCUREMENT_MANAGER, "admin"):
+        try:
+            notify_role(
+                db, role,
+                category    = "Procurement Approvals",
+                title       = f"Reorder Approval Needed — {item['name']}",
+                description = (
+                    f"{item['name']} stock is at {item['current_stock']} {item['unit']} ({reason}). "
+                    f"A smart contract order for {quantity} {item['unit']} from "
+                    f"{selection['vendor_name']}{price_note} is awaiting approval. "
+                    f"The vendor will not be emailed until it is approved."
+                ),
+                metadata    = {"order_id": order_id, "order_code": order_code, "item_id": item["item_id"]},
+            )
+        except Exception as e:
+            # Non-fatal — the order is already committed and visible in both
+            # approvals queues; a failed notification mustn't undo or abort it.
+            db.rollback()
+            print(f"[WARN] Approval notification to {role} failed for {order_code}: {e}")
 
-    return {"order_id": order_id, "order_code": order_code, "stage": "Pending PM Approval"}
+    return {
+        "order_id": order_id, "order_code": order_code, "stage": "Pending PM Approval",
+        "vendor_name": selection["vendor_name"], "unit_price": unit_price,
+    }
 
 
 @router.get("/pending-approvals", dependencies=[_pm])
@@ -872,6 +994,101 @@ def approve_reorder(order_id: str, user: dict = Depends(get_current_user), db: S
     return {
         "message": f"Order {order['order_code']} approved. Vendor email {result['status'].lower()}.",
         "vendor_email_status": result["status"],
+    }
+
+
+class EditReorderRequest(BaseModel):
+    quantity:          float = Field(gt=0)
+    expected_delivery: Optional[str] = None   # YYYY-MM-DD, today or later
+
+
+@router.put("/approvals/{order_id}", dependencies=[Depends(require_role())])
+def edit_pending_reorder(order_id: str, req: EditReorderRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Admin-only: change a pending auto-reorder's quantity (and optionally its
+    expected delivery date) before approving it. The vendor and unit price
+    stay as picked by select_lowest_price_vendor. The pending smart contract
+    was issued with the old terms, so it is rejected as superseded and a new
+    one is created with the new terms — both via contract_service as-is —
+    and both steps are written to contract_audit_log. All in one commit.
+    """
+    order = _get_order(db, order_id)
+    if order["pm_approval_status"] != "Pending":
+        raise HTTPException(400, f"Only a pending reorder can be edited (status: {order['pm_approval_status']})")
+
+    new_qty = float(req.quantity)
+    old_qty = float(order["quantity"])
+    old_delivery = str(order["expected_delivery"]) if order.get("expected_delivery") else None
+    new_delivery = old_delivery
+    if req.expected_delivery:
+        try:
+            parsed = datetime.strptime(req.expected_delivery, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(400, "Expected delivery must be a date (YYYY-MM-DD)")
+        if parsed < datetime.now().date():
+            raise HTTPException(400, "Expected delivery cannot be in the past")
+        new_delivery = parsed.isoformat()
+
+    if new_qty == old_qty and new_delivery == old_delivery:
+        raise HTTPException(400, "Nothing changed")
+
+    unit_price = float(order["unit_price"]) if order.get("unit_price") is not None else None
+    total_price = round(new_qty * unit_price, 2) if unit_price is not None else None
+    changes = {}
+    if new_qty != old_qty:
+        changes["quantity"] = {"from": old_qty, "to": new_qty}
+    if new_delivery != old_delivery:
+        changes["expected_delivery"] = {"from": old_delivery, "to": new_delivery}
+
+    old_data = order.get("smart_contract_data") or {}
+    if isinstance(old_data, str):
+        old_data = json.loads(old_data)
+    if order.get("contract_hash"):
+        rejected = reject_contract(order["contract_hash"], old_data, "Superseded — reorder edited by admin before approval")
+        db.execute(
+            text("""
+                INSERT INTO contract_audit_log (id, order_id, action, performed_by, tx_hash, payload, performed_at)
+                VALUES (:id, :oid, 'Rejected', :uid, :hash, CAST(:payload AS jsonb), NOW())
+            """),
+            {"id": str(uuid.uuid4()), "oid": order_id, "uid": user["id"], "hash": order["contract_hash"],
+             "payload": json.dumps({"reason": "superseded by edit", "contract": rejected})},
+        )
+
+    contract = create_smart_contract(
+        order_code        = order["order_code"],
+        item_name         = order["item_name"],
+        quantity          = new_qty,
+        unit              = order["unit"],
+        vendor_name       = order["vendor_name"],
+        vendor_email      = order["vendor_email"],
+        unit_price        = unit_price,
+        expected_delivery = new_delivery,
+    )
+    db.execute(
+        text("""
+            UPDATE procurement_orders SET
+              quantity = :qty, total_price = :total, expected_delivery = :delivery,
+              contract_hash = :hash, smart_contract_data = CAST(:data AS jsonb),
+              contract_status = 'Pending', updated_at = NOW()
+            WHERE id = :id
+        """),
+        {"qty": new_qty, "total": total_price, "delivery": new_delivery, "hash": contract["contract_hash"],
+         "data": json.dumps(contract["contract_data"]), "id": order_id},
+    )
+    db.execute(
+        text("""
+            INSERT INTO contract_audit_log (id, order_id, action, performed_by, tx_hash, block_number, payload, performed_at)
+            VALUES (:id, :oid, 'Created', :uid, :hash, :block, CAST(:payload AS jsonb), NOW())
+        """),
+        {"id": str(uuid.uuid4()), "oid": order_id, "uid": user["id"], "hash": contract["contract_hash"],
+         "block": contract["block_number"], "payload": json.dumps({"reason": "reorder edited by admin", "changes": changes})},
+    )
+    db.commit()
+
+    return {
+        "message": f"{order['order_code']} updated — new smart contract issued.",
+        "order": _order_to_dict(_get_order(db, order_id)),
+        "changes": changes,
     }
 
 

@@ -1,6 +1,6 @@
 # n8n Automation Wiring — Vendor Reorder Email
 
-How the automated <20%-stock reorder flow (Section 3) hands off to n8n for the
+How the automated reorder flow (every auto trigger — Critical, Low, Demand > Stock) (Section 3) hands off to n8n for the
 vendor-facing email with Accept/Reject buttons, how the buttons call back
 into FastAPI, how that decision reflects back into the Vendor Communication
 portal, and how the vendor gets a confirmation copy of the executed smart
@@ -17,20 +17,31 @@ database.
 
 ```
 1. Inventory scan (POST /api/inventory/check, or any read that recomputes
-   status) finds an item with current_stock <= critical_threshold
-   (== 20% of min_threshold, per 001_schema.sql's existing comment).
+   status) finds an item that needs reordering — any of the three auto
+   triggers: Critical (stock below 21% of min_threshold, 0% included),
+   Demand > Stock (predicted demand exceeds stock), or Low (21–35% of
+   min_threshold) — thresholds in ai-module/stock_thresholds.py. Critical
+   items are also reordered automatically on every backend startup
+   (inventory_v2.reorder_critical_items_on_startup), skipping any item that
+   already has an open order. Every trigger takes the approval path below —
+   no auto-reorder emails a vendor without a human sign-off.
         │
         ▼
 2. inventory_v2.run_inventory_check() calls
-   procurement.create_pending_approval_order():
+   procurement.create_pending_approval_order(db, item, trigger_type, reason):
+     - procurement.select_lowest_price_vendor() picks the vendor (see
+       "Lowest-unit-price vendor selection" below)
      - create_smart_contract(...) [contract_service.py, unmodified]
      - INSERT procurement_orders (stage='Pending PM Approval',
-       pm_approval_status='Pending', below_20pct_trigger=TRUE)
-     - notify_role(db, "procurement_manager", ...) — in-app notification
+       pm_approval_status='Pending', below_20pct_trigger=TRUE only for
+       the Critical trigger, vendor_selection=the vendors compared)
+     - notify_role(...) for both "procurement_manager" and "admin" —
+       in-app notification
         │
         ▼
-3. Procurement Manager sees it in /procurement/approvals (frontend) and
-   calls POST /api/procurement/approve/{order_id}
+3. A Procurement Manager (/procurement/approvals) or Admin
+   (/admin/approvals) reviews it and calls
+   POST /api/procurement/approve/{order_id} (or /reject/{order_id})
         │
         ▼
 4. procurement.approve_reorder():
@@ -73,6 +84,31 @@ database.
    history panel picks up the new `n8n-contract-confirmation` log entry the
    same way it already showed the original `n8n-email` entry.
 ```
+
+## Lowest-unit-price vendor selection (`procurement.select_lowest_price_vendor`)
+
+When an auto-reorder fires, the candidates are:
+
+- the item's default vendor (`inventory_items.vendor_id` at
+  `inventory_items.unit_price`), if that vendor is still active, and
+- every active approved vendor whose catalogue (`vendor_items`, active
+  rows only) carries the same item: linked via
+  `vendor_items.inventory_item_id`, or — for unlinked rows — an exact
+  case-insensitive name match. The unit must match too (prices in
+  different units aren't comparable), and the vendor's MOQ must be
+  `<=` the reorder quantity.
+
+The cheapest unit price wins. A tie goes to the default vendor, then to
+the shorter lead time. The order, smart contract and invoice all use the
+winning vendor and its price. Every vendor compared (best offer per vendor)
+is stored in `procurement_orders.vendor_selection` (JSONB), and the
+approvals queue shows it ("Lowest price of N vendors" + the other quotes).
+The vendor is picked when the order is created, not when it is approved —
+the smart contract already names the vendor by then.
+
+Migration `015_reorder_approval_lowest_price_vendor.sql` adds
+`vendor_items.inventory_item_id` (backfilled by exact name + unit match on
+every startup, for unlinked rows only) and `procurement_orders.vendor_selection`.
 
 ## Payload FastAPI sends to n8n (`POST {N8N_WEBHOOK_URL}`)
 
@@ -209,9 +245,9 @@ vendor actually clicked a real email — worth re-checking if you touch either p
 
 | Method | Path | Auth |
 |---|---|---|
-| `GET` | `/api/procurement/pending-approvals` | Procurement Manager |
-| `POST` | `/api/procurement/approve/{order_id}` | Procurement Manager |
-| `POST` | `/api/procurement/reject/{order_id}` | Procurement Manager |
+| `GET` | `/api/procurement/pending-approvals` | Procurement Manager / Admin |
+| `POST` | `/api/procurement/approve/{order_id}` | Procurement Manager / Admin |
+| `POST` | `/api/procurement/reject/{order_id}` | Procurement Manager / Admin |
 | `GET` | `/api/procurement/vendor-response/{order_id}?decision=accept\|reject&token=...` | public — HTML landing page (`main.py`) |
 | `POST` | `/api/procurement/vendor-response/{order_id}?decision=accept\|reject&token=...` | public, token-secured — the actual decision |
 | `GET` | `/api/procurement/vendor-invoice/{order_id}?token=...` | public, token-secured |

@@ -9,6 +9,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Loader2, Plus, Trash2, ShoppingCart } from "lucide-react";
 import { listVendors, getVendorItems, placeVendorOrder, getPaymentsConfig, Vendor, VendorItem } from "@/services/api";
 import { formatPKR } from "@/lib/currency";
+import { orderQuantityError } from "@/lib/validation";
 import { useToast } from "@/hooks/use-toast";
 
 interface LocationState {
@@ -18,7 +19,7 @@ interface LocationState {
 
 interface OrderRow {
   vendor_item_id: string;
-  quantity: number;
+  quantity: string; // raw input — validated by orderQuantityError
 }
 
 const PlaceVendorOrder = () => {
@@ -71,7 +72,7 @@ const PlaceVendorOrder = () => {
 
   useEffect(() => { loadItems(vendorId); setRows([]); }, [vendorId, loadItems]);
 
-  const addRow = () => setRows((r) => [...r, { vendor_item_id: "", quantity: 1 }]);
+  const addRow = () => setRows((r) => [...r, { vendor_item_id: "", quantity: "1" }]);
   const updateRow = (idx: number, patch: Partial<OrderRow>) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   const removeRow = (idx: number) => setRows((r) => r.filter((_, i) => i !== idx));
@@ -79,18 +80,18 @@ const PlaceVendorOrder = () => {
   const itemById = (id: string) => items.find((i) => i.id === id);
   const subtotal = rows.reduce((sum, r) => {
     const it = itemById(r.vendor_item_id);
-    return sum + (it ? it.unit_price * r.quantity : 0);
+    return sum + (it && !orderQuantityError(r.quantity) ? it.unit_price * Number(r.quantity) : 0);
   }, 0);
 
   const overCap = maxOrderTotal != null && subtotal * (1 + feeRate) > maxOrderTotal;
-  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && r.quantity > 0) && !overCap;
+  const canSubmit = vendorId && destinationName.trim() && rows.length > 0 && rows.every((r) => r.vendor_item_id && !orderQuantityError(r.quantity)) && !overCap;
 
   const handleSubmit = async () => {
     setPlacing(true);
     try {
       const res = await placeVendorOrder({
         vendor_id: vendorId,
-        items: rows.map((r) => ({ vendor_item_id: r.vendor_item_id, quantity: r.quantity })),
+        items: rows.map((r) => ({ vendor_item_id: r.vendor_item_id, quantity: Number(r.quantity) })),
         destination_name: destinationName,
         destination_city: destinationCity || undefined,
         destination_address: destinationAddress || undefined,
@@ -157,8 +158,10 @@ const PlaceVendorOrder = () => {
           <div className="space-y-2">
             {rows.map((row, idx) => {
               const it = itemById(row.vendor_item_id);
+              const qtyError = orderQuantityError(row.quantity);
               return (
-                <div key={idx} className="flex items-center gap-2">
+                <div key={idx}>
+                <div className="flex items-center gap-2">
                   <select
                     value={row.vendor_item_id}
                     onChange={(e) => updateRow(idx, { vendor_item_id: e.target.value })}
@@ -168,14 +171,17 @@ const PlaceVendorOrder = () => {
                     {items.map((i) => <option key={i.id} value={i.id}>{i.name} ({formatPKR(i.unit_price)}/{i.unit})</option>)}
                   </select>
                   <input
-                    type="number" min={0.01} step="any" value={row.quantity}
-                    onChange={(e) => updateRow(idx, { quantity: Number(e.target.value) })}
-                    className="w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border"
+                    type="number" min={0} step="any" value={row.quantity}
+                    onChange={(e) => updateRow(idx, { quantity: e.target.value })}
+                    aria-invalid={!!qtyError}
+                    className={`w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border ${qtyError ? "border-destructive" : "border-border"}`}
                   />
                   <span className="text-sm text-muted-foreground w-28 text-right font-mono">
-                    {it ? formatPKR(it.unit_price * row.quantity) : "—"}
+                    {it && !qtyError ? formatPKR(it.unit_price * Number(row.quantity)) : "—"}
                   </span>
                   <button onClick={() => removeRow(idx)} className="text-muted-foreground hover:text-destructive"><Trash2 size={16} /></button>
+                </div>
+                {qtyError && <p className="text-xs text-destructive mt-1 text-right pr-36">{qtyError}</p>}
                 </div>
               );
             })}

@@ -45,13 +45,14 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     category            VARCHAR(50) NOT NULL,
     unit                VARCHAR(50) NOT NULL,
     min_threshold       INTEGER NOT NULL,
-    critical_threshold  INTEGER NOT NULL,          -- 20% of min_threshold
+    critical_threshold  INTEGER NOT NULL,          -- 20% of min_threshold (days_until_critical only, not the label)
     current_stock       NUMERIC(12,2) NOT NULL DEFAULT 0,
     daily_consumption   NUMERIC(10,2) NOT NULL DEFAULT 0,
     reorder_quantity    INTEGER NOT NULL,
     vendor_id           UUID REFERENCES vendors(id) ON DELETE SET NULL,
     status              VARCHAR(20) NOT NULL DEFAULT 'OK',
-    -- status: OK | Low | Critical
+    -- status: OK | Low | Critical, by stock % = current_stock / min_threshold x 100
+    --   Critical < 21% (incl. 0%), Low 21-35%, OK >= 36% (stock_thresholds.py, migration 017)
     days_until_reorder  INTEGER,
     days_until_critical INTEGER,
     last_updated        TIMESTAMPTZ DEFAULT NOW(),
@@ -218,20 +219,20 @@ VALUES
   -- Generation
   ('INV-001','Generators (500kW)','Generation','units',100,20,150,2.5,100, '11111111-0000-0000-0000-000000000001','OK'),
   ('INV-002','Solar Panels (250W)','Generation','units',500,100,1200,15,500, '11111111-0000-0000-0000-000000000002','OK'),
-  ('INV-003','Wind Turbine Blades','Generation','units',50,10,35,1.2,50, '11111111-0000-0000-0000-000000000003','Low'),
+  ('INV-003','Wind Turbine Blades','Generation','units',50,10,35,1.2,50, '11111111-0000-0000-0000-000000000003','OK'),
   ('INV-004','Diesel Fuel (Litres)','Generation','litres',10000,2000,25000,500,10000, '11111111-0000-0000-0000-000000000004','OK'),
-  ('INV-005','Steam Turbines','Generation','units',20,4,15,0.5,20, '11111111-0000-0000-0000-000000000005','Low'),
+  ('INV-005','Steam Turbines','Generation','units',20,4,15,0.5,20, '11111111-0000-0000-0000-000000000005','OK'),
   -- Infrastructure
-  ('INV-006','Distribution Transformers (11kV)','Infrastructure','units',500,100,142,5,500, '11111111-0000-0000-0000-000000000001','Critical'),
+  ('INV-006','Distribution Transformers (11kV)','Infrastructure','units',500,100,142,5,500, '11111111-0000-0000-0000-000000000001','Low'),
   ('INV-007','Power Cables (HT)','Infrastructure','meters',5000,1000,8500,120,5000, '11111111-0000-0000-0000-000000000003','OK'),
   ('INV-008','Concrete Poles (10m)','Infrastructure','units',1000,200,1200,10,1000, '11111111-0000-0000-0000-000000000002','OK'),
-  ('INV-009','Insulators (Porcelain)','Infrastructure','units',500,100,312,15,500, '11111111-0000-0000-0000-000000000004','Low'),
+  ('INV-009','Insulators (Porcelain)','Infrastructure','units',500,100,312,15,500, '11111111-0000-0000-0000-000000000004','OK'),
   ('INV-010','Copper Conductors','Infrastructure','kg',1000,200,2,45.0,2000, '11111111-0000-0000-0000-000000000006','Critical'),
   -- Operational
   ('INV-011','Smart Meters (AMI)','Operational','units',200,40,4,8.0,400, '11111111-0000-0000-0000-000000000001','Critical'),
-  ('INV-012','Lineman Safety Kits','Operational','kits',50,10,45,2,50, '11111111-0000-0000-0000-000000000005','Low'),
-  ('INV-013','Maintenance Vehicles','Operational','units',20,4,18,0.5,20, '11111111-0000-0000-0000-000000000006','Low'),
-  ('INV-014','Toolboxes (Heavy Duty)','Operational','units',100,20,80,1,100, '11111111-0000-0000-0000-000000000002','Low'),
+  ('INV-012','Lineman Safety Kits','Operational','kits',50,10,45,2,50, '11111111-0000-0000-0000-000000000005','OK'),
+  ('INV-013','Maintenance Vehicles','Operational','units',20,4,18,0.5,20, '11111111-0000-0000-0000-000000000006','OK'),
+  ('INV-014','Toolboxes (Heavy Duty)','Operational','units',100,20,80,1,100, '11111111-0000-0000-0000-000000000002','OK'),
   ('INV-015','Radio Communicators','Operational','units',50,10,48,0.5,50, '11111111-0000-0000-0000-000000000004','OK')
 ON CONFLICT DO NOTHING;
 

@@ -20,6 +20,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { formatPKR } from "@/lib/currency";
 
+import ModalPortal from "@/components/ModalPortal";
 type Tab = "ledger" | "methods" | "flow";
 
 const METHOD_ICON: Record<PaymentMethodType, typeof Landmark> = {
@@ -533,7 +534,7 @@ const RecordTransferModal = ({ orderId, orderCode, amount, vendorName, onClose, 
     }
   };
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+    <ModalPortal><div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
         <div className="flex items-start justify-between">
           <h3 className="font-heading font-bold text-lg">Record bank transfer</h3>
@@ -557,7 +558,7 @@ const RecordTransferModal = ({ orderId, orderCode, amount, vendorName, onClose, 
           </button>
         </div>
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

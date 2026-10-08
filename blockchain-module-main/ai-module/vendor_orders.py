@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -34,6 +34,8 @@ from n8n_service import (
     trigger_vendor_order_email,
     trigger_vendor_order_shipment_link_email,
     trigger_vendor_order_status_checkin_email,
+    trigger_vendor_order_cancelled_email,
+    trigger_vendor_order_disputed_email,
 )
 import shipment_chain_service as chain
 import payments
@@ -225,7 +227,7 @@ def _invoice_data(order: dict, items: List[dict]) -> dict:
 
 class PlaceOrderItemRequest(BaseModel):
     vendor_item_id: str
-    quantity: float
+    quantity: float = Field(gt=0)   # no zero/negative lines (or totals)
 
 
 class PlaceOrderRequest(BaseModel):
@@ -256,8 +258,10 @@ def place_vendor_order(req: PlaceOrderRequest, user: dict = Depends(get_current_
         ).mappings().first()
         if not vi:
             raise HTTPException(400, f"Item {it.vendor_item_id} not found in this vendor's catalogue")
-        if it.quantity <= 0:
-            raise HTTPException(400, f"Quantity for {vi['name']} must be positive")
+        if it.quantity < 0:
+            raise HTTPException(400, f"Quantity for {vi['name']} cannot be negative")
+        if it.quantity == 0:
+            raise HTTPException(400, f"Quantity for {vi['name']} must be greater than 0")
         line_total = round(float(it.quantity) * float(vi["unit_price"]), 2)
         subtotal += line_total
         line_items.append({
@@ -790,7 +794,14 @@ def dispute_endpoint(order_id: str, req: DisputeRequest, user: dict = Depends(ge
         metadata={"order_id": order_id},
     )
     db.commit()
-    return {"message": "Dispute opened. Contract frozen pending admin resolution.", "chain": chain_result}
+
+    email = trigger_vendor_order_disputed_email(order, _get_items(db, order_id), req.reason.strip(), user["name"])
+    return {
+        "message": f"Dispute opened. Contract frozen pending admin resolution. "
+                   f"Vendor email {email['status'].lower()}.",
+        "chain": chain_result,
+        "vendor_email_status": email["status"],
+    }
 
 
 class ResolveDisputeRequest(BaseModel):
@@ -1046,23 +1057,34 @@ def resend_vendor_request(order_id: str, user: dict = Depends(get_current_user),
     return {"message": f"Resent to {order['vendor_name']}.", "vendor_email_status": result["status"]}
 
 
+class CancelOrderRequest(BaseModel):
+    reason: str
+
+
 @router.post("/api/vendor-orders/{order_id}/cancel", dependencies=[_staff])
-def cancel_vendor_order(order_id: str, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+def cancel_vendor_order(order_id: str, req: CancelOrderRequest, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     order = _get_order(db, order_id)
     if order["status"] != "PENDING_VENDOR":
         raise HTTPException(400, "Can only cancel while awaiting vendor response")
+    if not req.reason or not req.reason.strip():
+        raise HTTPException(400, "A reason is required")
 
     db.execute(text("UPDATE vendor_order_tokens SET revoked_at = NOW() WHERE order_id=:id AND used_at IS NULL"), {"id": order_id})
     db.execute(
         text("""
             UPDATE vendor_orders SET status='CANCELLED', payout_status='Not Applicable',
-              cancelled_at=NOW(), cancelled_by=:uid, updated_at=NOW()
+              cancelled_at=NOW(), cancelled_by=:uid, cancellation_reason=:reason, updated_at=NOW()
             WHERE id=:id
         """),
-        {"uid": user["id"], "id": order_id},
+        {"uid": user["id"], "reason": req.reason.strip(), "id": order_id},
     )
     db.commit()
-    return {"message": f"Order {order['order_code']} cancelled."}
+
+    email = trigger_vendor_order_cancelled_email(order, _get_items(db, order_id), req.reason.strip(), user["name"])
+    return {
+        "message": f"Order {order['order_code']} cancelled. Vendor email {email['status'].lower()}.",
+        "vendor_email_status": email["status"],
+    }
 
 
 class CancelContractRequest(BaseModel):
@@ -1085,10 +1107,10 @@ def cancel_vendor_contract(order_id: str, req: CancelContractRequest, user: dict
     db.execute(
         text("""
             UPDATE vendor_orders SET contract_status='Cancelled', next_status_checkin_due=NULL,
-              cancelled_at=NOW(), cancelled_by=:uid, updated_at=NOW()
+              cancelled_at=NOW(), cancelled_by=:uid, cancellation_reason=:reason, updated_at=NOW()
             WHERE id=:id
         """),
-        {"uid": user["id"], "id": order_id},
+        {"uid": user["id"], "reason": req.reason.strip(), "id": order_id},
     )
     db.execute(text("UPDATE shipments SET status='Cancelled', updated_at=NOW() WHERE order_id=:id"), {"id": order_id})
     payments.cancel_for_order(db, order_id, actor_user_id=user["id"], note=req.reason)
@@ -1103,7 +1125,16 @@ def cancel_vendor_contract(order_id: str, req: CancelContractRequest, user: dict
         metadata={"order_id": order_id},
     )
     db.commit()
-    return {"message": f"Contract for {order['order_code']} cancelled, payment hold released.", "chain": chain_result}
+
+    email = trigger_vendor_order_cancelled_email(
+        order, _get_items(db, order_id), req.reason.strip(), user["name"], shipment_started=True,
+    )
+    return {
+        "message": f"Contract for {order['order_code']} cancelled, payment hold released. "
+                   f"Vendor email {email['status'].lower()}.",
+        "chain": chain_result,
+        "vendor_email_status": email["status"],
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════

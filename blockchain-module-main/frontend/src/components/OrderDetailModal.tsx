@@ -12,7 +12,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatPKR } from "@/lib/currency";
+import { receivedQuantityError } from "@/lib/validation";
 
+import ModalPortal from "@/components/ModalPortal";
 interface Props {
   order: ProcurementOrder;
   onClose: () => void;
@@ -50,7 +52,8 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
 
   // Check-in form state
   const [ciStatus, setCiStatus]   = useState("Arrived at Warehouse");
-  const [ciQty, setCiQty]         = useState(order.quantity);
+  const [ciQty, setCiQty]         = useState(String(order.quantity));
+  const ciQtyError = receivedQuantityError(ciQty);
   const [ciCond, setCiCond]       = useState<"Good" | "Partial" | "Damaged">("Good");
   const [ciLoc, setCiLoc]         = useState("Main Warehouse");
   const [ciNotes, setCiNotes]     = useState("");
@@ -91,12 +94,13 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   };
 
   const handleCheckin = async () => {
+    if (ciQtyError) return;
     setSubmitting(true);
     try {
       const res = await submitDeliveryCheckin(order.id, {
         location:          ciLoc,
         status:            ciStatus,
-        quantity_received: ciQty,
+        quantity_received: Number(ciQty),
         condition:         ciCond,
         notes:             ciNotes,
         is_final:          ciFinal,
@@ -152,7 +156,7 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   ];
 
   return (
-    <div
+    <ModalPortal><div
       className="fixed inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
@@ -410,10 +414,14 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Qty Received</label>
                       <input
                         type="number"
+                        min={0}
+                        step="any"
                         value={ciQty}
-                        onChange={(e) => setCiQty(Number(e.target.value))}
-                        className="w-full px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        onChange={(e) => setCiQty(e.target.value)}
+                        aria-invalid={!!ciQtyError}
+                        className={`w-full px-3 py-2 text-sm rounded-lg bg-muted/50 border focus:outline-none focus:ring-2 ${ciQtyError ? "border-destructive focus:ring-destructive/40" : "border-border focus:ring-primary/50"}`}
                       />
+                      {ciQtyError && <p className="text-xs text-destructive mt-1">{ciQtyError}</p>}
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Location</label>
@@ -454,8 +462,8 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                   )}
                   <button
                     onClick={handleCheckin}
-                    disabled={submitting}
-                    className="w-full py-2.5 btn-navy font-semibold flex items-center justify-center gap-2"
+                    disabled={submitting || !!ciQtyError}
+                    className="w-full py-2.5 btn-navy font-semibold flex items-center justify-center gap-2 disabled:opacity-50"
                   >
                     {submitting && <Loader2 size={14} className="animate-spin" />}
                     {ciFinal ? "Submit Final Check-In" : "Record Check-In Event"}
@@ -546,7 +554,7 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
           )}
         </div>
       </div>
-    </div>
+    </div></ModalPortal>
   );
 };
 

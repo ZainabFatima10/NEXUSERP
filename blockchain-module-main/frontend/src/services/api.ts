@@ -2,6 +2,7 @@
 // NEXUS ERP — API Service (Module 2 complete)
 // src/services/api.ts
 // ─────────────────────────────────────────────────────────────────────────────
+import type { StockStatus } from "@/lib/stockThresholds";
 
 declare global {
   interface ImportMetaEnv {
@@ -28,7 +29,12 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API error ${res.status}`);
+    // FastAPI validation errors (422) carry a list of {loc, msg} — show the messages.
+    const detail = Array.isArray(error.detail)
+      ? error.detail.map((d: { loc?: unknown[]; msg?: string }) =>
+          `${d.loc ? String(d.loc[d.loc.length - 1]) + ": " : ""}${d.msg ?? ""}`).join("; ")
+      : error.detail;
+    throw new Error(detail || `API error ${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -77,7 +83,7 @@ export interface InventoryItem {
   vendor_id?: string | null;
   vendor_name: string;
   vendor_email: string;
-  status: "OK" | "Low" | "Critical" | "Out of Stock";
+  status: StockStatus;
   category: string;
   days_until_reorder: number;
   days_until_critical: number;
@@ -128,7 +134,7 @@ export interface DemandPredictionItem {
   category: string;
   current_stock: number;
   predicted_demand: number;
-  status: "OK" | "Low" | "Critical" | "Out of Stock" | "Unknown";
+  status: StockStatus | "Unknown";
   reorder_needed: boolean;
   reorder_quantity: number;
   trigger_type: string;
@@ -177,6 +183,23 @@ export interface DeliveryCheckin {
   is_final: boolean;
 }
 
+export interface VendorSelectionCandidate {
+  vendor_id: string;
+  vendor_name: string;
+  vendor_email: string;
+  unit_price: number | null;
+  source: "inventory_default" | "vendor_catalogue";
+  vendor_item_id: string | null;
+  lead_time_days: number | null;
+}
+
+/** How an auto-reorder picked its vendor — lowest unit price wins. */
+export interface VendorSelection {
+  rule: "lowest_unit_price";
+  selected_vendor_id: string;
+  candidates: VendorSelectionCandidate[];
+}
+
 export interface ProcurementOrder {
   id: string;
   order_code: string;
@@ -204,9 +227,11 @@ export interface ProcurementOrder {
   pm_approval_status?: "Not Required" | "Pending" | "Approved" | "Rejected";
   pm_approved_by?: string | null;
   pm_approved_at?: string | null;
+  pm_decision_notes?: string | null;
   vendor_response_token?: string | null;
   vendor_decision?: "Accepted" | "Rejected" | null;
   vendor_responded_at?: string | null;
+  vendor_selection?: VendorSelection | null;
   created_at: string;
   updated_at: string;
 }
@@ -291,6 +316,13 @@ export const getCheckins = (orderId: string) =>
 // ═══════════════════════════════════════════════════════════════════════════════
 export const listPendingApprovals = () =>
   apiFetch<{ orders: ProcurementOrder[] }>("/api/procurement/pending-approvals");
+
+/** Admin-only: change a pending auto-reorder's quantity / expected delivery (re-issues its smart contract). */
+export const editReorder = (orderId: string, body: { quantity: number; expected_delivery?: string }) =>
+  apiFetch<{ message: string; order: ProcurementOrder; changes: Record<string, { from: unknown; to: unknown }> }>(
+    `/api/procurement/approvals/${orderId}`,
+    { method: "PUT", body: JSON.stringify(body) }
+  );
 
 export const approveReorder = (orderId: string) =>
   apiFetch<{ message: string; vendor_email_status: string }>(
@@ -1092,8 +1124,12 @@ export const placeVendorOrder = (payload: PlaceVendorOrderPayload) =>
 export const resendVendorOrderRequest = (orderId: string) =>
   apiFetch<{ message: string; vendor_email_status: string }>(`/api/vendor-orders/${orderId}/resend-vendor-request`, { method: "POST" });
 
-export const cancelVendorOrder = (orderId: string) =>
-  apiFetch<{ message: string }>(`/api/vendor-orders/${orderId}/cancel`, { method: "POST" });
+/** Cancel an order still awaiting the vendor's response — the reason is emailed to the vendor. */
+export const cancelVendorOrder = (orderId: string, reason: string) =>
+  apiFetch<{ message: string; vendor_email_status: string }>(`/api/vendor-orders/${orderId}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 
 /** Admin-only: cancel an accepted, not-yet-arrived contract on-chain and release the payment hold. */
 export const cancelVendorContract = (orderId: string, reason: string) =>
@@ -1313,6 +1349,7 @@ export interface TrackingDetail {
     chain_network: string | null;
     dispute_reason: string | null;
     dispute_resolution: string | null;
+    cancellation_reason: string | null;
     is_orderer: boolean;
   };
   items: TrackingOrderItem[];
