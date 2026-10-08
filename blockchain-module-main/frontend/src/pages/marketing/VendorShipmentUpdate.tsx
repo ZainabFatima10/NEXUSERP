@@ -9,6 +9,8 @@ import { Loader2, AlertCircle, Truck, MapPin, CheckCircle2 } from "lucide-react"
 import Navbar from "@/components/marketing/Navbar";
 import Footer from "@/components/marketing/Footer";
 import { getPublicShipment, submitVendorShipmentUpdate, PublicShipment } from "@/services/api";
+import FieldError from "@/components/FieldError";
+import { validate, required, errorInputClass } from "@/lib/validation";
 
 const cardCls = "bg-navy-900/60 border border-white/10 rounded-2xl p-6 sm:p-8";
 const inputCls =
@@ -41,6 +43,10 @@ const VendorShipmentUpdate = () => {
   const [checkpointStatus, setCheckpointStatus] = useState<"InTransit" | "OutForDelivery">("InTransit");
   const [location, setLocation] = useState("");
   const [note, setNote] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<{ carrier?: string | null; trackingNo?: string | null }>({});
+
+  const vCarrier = () => validate(carrier, required("Carrier is required"));
+  const vTrackingNo = () => validate(trackingNo, required("Tracking/waybill number is required"));
 
   const load = useCallback(() => {
     if (!orderId || !token) {
@@ -63,6 +69,9 @@ const VendorShipmentUpdate = () => {
   useEffect(() => { load(); }, [load]);
 
   const handleDispatch = async () => {
+    const errs = { carrier: vCarrier(), trackingNo: vTrackingNo() };
+    setFieldErrors(errs);
+    if (errs.carrier || errs.trackingNo) return;
     setSubmitting(true);
     setError(null);
     setMessage(null);
@@ -155,11 +164,24 @@ const VendorShipmentUpdate = () => {
                 <h2 className="text-white font-semibold text-sm uppercase tracking-wide">Mark as Dispatched</h2>
                 <div>
                   <label className={labelCls}>Carrier</label>
-                  <input className={inputCls} value={carrier} onChange={(e) => setCarrier(e.target.value)} placeholder="e.g. TCS, Leopards" />
+                  <input
+                    className={`${inputCls} ${fieldErrors.carrier ? errorInputClass : ""}`}
+                    value={carrier}
+                    onChange={(e) => setCarrier(e.target.value)}
+                    onBlur={() => setFieldErrors((f) => ({ ...f, carrier: vCarrier() }))}
+                    placeholder="e.g. TCS, Leopards"
+                  />
+                  <FieldError message={fieldErrors.carrier} />
                 </div>
                 <div>
                   <label className={labelCls}>Tracking / Waybill Number</label>
-                  <input className={inputCls} value={trackingNo} onChange={(e) => setTrackingNo(e.target.value)} />
+                  <input
+                    className={`${inputCls} ${fieldErrors.trackingNo ? errorInputClass : ""}`}
+                    value={trackingNo}
+                    onChange={(e) => setTrackingNo(e.target.value)}
+                    onBlur={() => setFieldErrors((f) => ({ ...f, trackingNo: vTrackingNo() }))}
+                  />
+                  <FieldError message={fieldErrors.trackingNo} />
                 </div>
                 <div>
                   <label className={labelCls}>Estimated Arrival (ETA)</label>

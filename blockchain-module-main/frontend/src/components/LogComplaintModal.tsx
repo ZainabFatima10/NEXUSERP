@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { X, Loader2, ClipboardList } from "lucide-react";
 import { createManualComplaint, getComplaintTaxonomy } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import FieldError from "@/components/FieldError";
+import { validate, required, isEmail, errorInputClass } from "@/lib/validation";
 
 interface Props {
   onClose: () => void;
@@ -25,6 +27,10 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
   const [customerEmail, setCustomerEmail] = useState("");
   const [area, setArea] = useState("");
   const [saving, setSaving] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ description?: string | null; customerEmail?: string | null }>({});
+
+  const vDescription = () => validate(description, required("Please describe the complaint"));
+  const vCustomerEmail = () => validate(customerEmail, isEmail());
 
   useEffect(() => {
     getComplaintTaxonomy()
@@ -47,6 +53,9 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
 
   const submit = async () => {
     if (!canSubmit) return;
+    const errs = { description: vDescription(), customerEmail: vCustomerEmail() };
+    setFieldErrors(errs);
+    if (errs.description || errs.customerEmail) return;
     setSaving(true);
     try {
       const res = await createManualComplaint({
@@ -92,10 +101,12 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => setFieldErrors((f) => ({ ...f, description: vDescription() }))}
               rows={3}
               placeholder="e.g. Customer phoned in — no power in street 12, F-8 since 2pm."
-              className={`${field} mt-1 resize-y`}
+              className={`${field} mt-1 resize-y ${fieldErrors.description ? errorInputClass : ""}`}
             />
+            <FieldError message={fieldErrors.description} />
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -145,7 +156,14 @@ const LogComplaintModal = ({ onClose, onCreated }: Props) => {
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Customer email</label>
-            <input value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} placeholder="Optional" className={`${field} mt-1`} />
+            <input
+              value={customerEmail}
+              onChange={(e) => setCustomerEmail(e.target.value)}
+              onBlur={() => setFieldErrors((f) => ({ ...f, customerEmail: vCustomerEmail() }))}
+              placeholder="Optional"
+              className={`${field} mt-1 ${fieldErrors.customerEmail ? errorInputClass : ""}`}
+            />
+            <FieldError message={fieldErrors.customerEmail} />
           </div>
         </div>
 

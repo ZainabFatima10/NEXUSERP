@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { Complaint, ComplaintEvent, getComplaint, resolveComplaint, escalateComplaint } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
+import FieldError from "@/components/FieldError";
+import { validate, required, errorInputClass } from "@/lib/validation";
 
 const severityStyle: Record<string, string> = {
   critical: "bg-destructive/10 text-destructive",
@@ -40,6 +42,9 @@ const TicketDetailModal = ({ ticketId, onClose, onUpdated }: Props) => {
   const [escalateNote, setEscalateNote] = useState("");
   const [showEscalate, setShowEscalate] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [resolutionError, setResolutionError] = useState<string | null>(null);
+
+  const vResolution = () => validate(resolution, required("A resolution note is required"));
 
   const load = () => {
     setLoading(true);
@@ -52,7 +57,9 @@ const TicketDetailModal = ({ ticketId, onClose, onUpdated }: Props) => {
   useEffect(load, [ticketId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleResolve = async () => {
-    if (!resolution.trim()) return;
+    const err = vResolution();
+    setResolutionError(err);
+    if (err) return;
     setSaving(true);
     try {
       await resolveComplaint(ticketId, resolution.trim());
@@ -170,10 +177,12 @@ const TicketDetailModal = ({ ticketId, onClose, onUpdated }: Props) => {
                     <textarea
                       value={resolution}
                       onChange={(e) => setResolution(e.target.value)}
+                      onBlur={() => setResolutionError(vResolution())}
                       rows={2}
                       placeholder="Resolution note…"
-                      className="w-full px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      className={`w-full px-3 py-2 rounded-lg bg-muted/50 border text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 ${resolutionError ? errorInputClass : "border-border"}`}
                     />
+                    <FieldError message={resolutionError} />
                     <div className="flex gap-2">
                       <button
                         onClick={() => setShowEscalate(true)}

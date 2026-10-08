@@ -5,6 +5,8 @@ import { Eye, EyeOff, LogIn, Loader2 } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
 import { ROLE_HOME } from "@/components/ProtectedRoute";
+import FieldError from "@/components/FieldError";
+import { validate, required, isEmail, errorInputClass } from "@/lib/validation";
 
 const Login = () => {
   const { login, loading } = useAuth();
@@ -17,10 +19,20 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string | null; password?: string | null }>({});
+
+  const emailError = fieldErrors.email;
+  const passwordError = fieldErrors.password;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
+    const errs = {
+      email: validate(email, required("Email is required"), isEmail()),
+      password: validate(password, required("Password is required")),
+    };
+    setFieldErrors(errs);
+    if (errs.email || errs.password) return;
     try {
       const user = await login(email, password);
       navigate(from || ROLE_HOME[user.role] || "/admin", { replace: true });
@@ -55,12 +67,13 @@ const Login = () => {
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Email</label>
               <input
                 type="email"
-                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, email: validate(email, required("Email is required"), isEmail()) }))}
                 placeholder="admin@nexus.com"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${emailError ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={emailError} />
             </div>
 
             <div>
@@ -68,11 +81,11 @@ const Login = () => {
               <div className="relative">
                 <input
                   type={showPassword ? "text" : "password"}
-                  required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
+                  onBlur={() => setFieldErrors((f) => ({ ...f, password: validate(password, required("Password is required")) }))}
                   placeholder="••••••••"
-                  className="w-full px-4 py-2.5 pr-10 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                  className={`w-full px-4 py-2.5 pr-10 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${passwordError ? errorInputClass : "border-border"}`}
                 />
                 <button
                   type="button"
@@ -83,6 +96,7 @@ const Login = () => {
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
+              <FieldError message={passwordError} />
             </div>
 
             <div className="flex items-center justify-between text-xs">

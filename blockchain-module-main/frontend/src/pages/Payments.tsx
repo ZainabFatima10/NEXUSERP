@@ -19,6 +19,8 @@ import {
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import { formatPKR } from "@/lib/currency";
+import FieldError from "@/components/FieldError";
+import { validate, required, minLength, errorInputClass } from "@/lib/validation";
 
 type Tab = "ledger" | "methods" | "flow";
 
@@ -520,7 +522,12 @@ const RecordTransferModal = ({ orderId, orderCode, amount, vendorName, onClose, 
   const [ref, setRef] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [refError, setRefError] = useState<string | null>(null);
+  const vRef = () => validate(ref, required("Bank transaction ID is required"), minLength(4, "Must be at least 4 characters"));
   const submit = async () => {
+    const err = vRef();
+    setRefError(err);
+    if (err) return;
     setSaving(true);
     try {
       const res = await confirmManualPayout(orderId, ref.trim(), note.trim() || undefined);
@@ -544,7 +551,15 @@ const RecordTransferModal = ({ orderId, orderCode, amount, vendorName, onClose, 
         </p>
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">Bank transaction ID / reference</label>
-          <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="e.g. Raast TxID or IBFT reference" className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-background font-mono" autoFocus />
+          <input
+            value={ref}
+            onChange={(e) => setRef(e.target.value)}
+            onBlur={() => setRefError(vRef())}
+            placeholder="e.g. Raast TxID or IBFT reference"
+            className={`w-full px-3 py-2 text-sm rounded-lg border bg-background font-mono ${refError ? errorInputClass : "border-border"}`}
+            autoFocus
+          />
+          <FieldError message={refError} />
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">Note (optional)</label>
@@ -594,8 +609,21 @@ const Methods = ({ methods, config, onChanged }: { methods: PaymentMethod[]; con
   const [makeDefault, setMakeDefault] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ label?: string | null; title?: string | null; bank?: string | null; ident?: string | null }>({});
+
+  const vLabel = () => validate(label, required("Label is required"));
+  const vTitle = () => validate(title, required("Account title is required"));
+  const vBank = () => validate(bank, required("Bank is required"));
+  const vIdent = () => validate(ident, required(`${IDENTIFIER_HINT[type].label} is required`));
 
   const submit = async () => {
+    const errs = {
+      label: vLabel(), title: vTitle(),
+      bank: type === "bank_transfer" ? vBank() : null,
+      ident: vIdent(),
+    };
+    setFieldErrors(errs);
+    if (errs.label || errs.title || errs.bank || errs.ident) return;
     setSaving(true);
     try {
       const res = await createPaymentMethod({
@@ -603,7 +631,7 @@ const Methods = ({ methods, config, onChanged }: { methods: PaymentMethod[]; con
         account_identifier: ident, is_default: makeDefault,
       });
       toast({ title: res.message });
-      setLabel(""); setTitle(""); setBank(""); setIdent(""); setMakeDefault(false); setShowForm(false);
+      setLabel(""); setTitle(""); setBank(""); setIdent(""); setMakeDefault(false); setShowForm(false); setFieldErrors({});
       onChanged();
     } catch (e: unknown) {
       toast({ title: e instanceof Error ? e.message : "Could not add payment method", variant: "destructive" });
@@ -702,21 +730,49 @@ const Methods = ({ methods, config, onChanged }: { methods: PaymentMethod[]; con
           <div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Label</label>
-              <input className={inputCls} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. HBL Procurement Account" />
+              <input
+                className={`${inputCls} ${fieldErrors.label ? errorInputClass : ""}`}
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, label: vLabel() }))}
+                placeholder="e.g. HBL Procurement Account"
+              />
+              <FieldError message={fieldErrors.label} />
             </div>
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Account title</label>
-              <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. IESCO Procurement Dept" />
+              <input
+                className={`${inputCls} ${fieldErrors.title ? errorInputClass : ""}`}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, title: vTitle() }))}
+                placeholder="e.g. IESCO Procurement Dept"
+              />
+              <FieldError message={fieldErrors.title} />
             </div>
             {type === "bank_transfer" && (
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1">Bank</label>
-                <input className={inputCls} value={bank} onChange={(e) => setBank(e.target.value)} placeholder="e.g. Habib Bank Limited" />
+                <input
+                  className={`${inputCls} ${fieldErrors.bank ? errorInputClass : ""}`}
+                  value={bank}
+                  onChange={(e) => setBank(e.target.value)}
+                  onBlur={() => setFieldErrors((f) => ({ ...f, bank: vBank() }))}
+                  placeholder="e.g. Habib Bank Limited"
+                />
+                <FieldError message={fieldErrors.bank} />
               </div>
             )}
             <div className={type === "bank_transfer" ? "" : "sm:col-span-2"}>
               <label className="block text-xs font-medium text-muted-foreground mb-1">{IDENTIFIER_HINT[type].label}</label>
-              <input className={`${inputCls} font-mono`} value={ident} onChange={(e) => setIdent(e.target.value)} placeholder={IDENTIFIER_HINT[type].placeholder} />
+              <input
+                className={`${inputCls} font-mono ${fieldErrors.ident ? errorInputClass : ""}`}
+                value={ident}
+                onChange={(e) => setIdent(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, ident: vIdent() }))}
+                placeholder={IDENTIFIER_HINT[type].placeholder}
+              />
+              <FieldError message={fieldErrors.ident} />
             </div>
           </div>
           <div className="flex items-center justify-between gap-3 flex-wrap">

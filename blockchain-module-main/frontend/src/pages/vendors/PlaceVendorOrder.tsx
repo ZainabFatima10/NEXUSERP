@@ -10,6 +10,8 @@ import { Loader2, Plus, Trash2, ShoppingCart } from "lucide-react";
 import { listVendors, getVendorItems, placeVendorOrder, getPaymentsConfig, Vendor, VendorItem } from "@/services/api";
 import { formatPKR } from "@/lib/currency";
 import { useToast } from "@/hooks/use-toast";
+import FieldError from "@/components/FieldError";
+import { validate, required, isPositive, errorInputClass } from "@/lib/validation";
 
 interface LocationState {
   prefillVendorId?: string;
@@ -40,6 +42,11 @@ const PlaceVendorOrder = () => {
   const [placing, setPlacing] = useState(false);
   const [feeRate, setFeeRate] = useState(0.005);
   const [maxOrderTotal, setMaxOrderTotal] = useState<number | null>(null);
+  const [destNameError, setDestNameError] = useState<string | null>(null);
+  const [rowQtyErrors, setRowQtyErrors] = useState<Record<number, string | null>>({});
+
+  const vDestName = () => validate(destinationName, required("Destination name is required"));
+  const vRowQty = (q: number) => validate(String(q), isPositive("Quantity must be greater than 0"));
 
   useEffect(() => {
     getPaymentsConfig().then((c) => { setFeeRate(c.platform_fee_rate); setMaxOrderTotal(c.max_order_total); }).catch(() => {});
@@ -74,7 +81,10 @@ const PlaceVendorOrder = () => {
   const addRow = () => setRows((r) => [...r, { vendor_item_id: "", quantity: 1 }]);
   const updateRow = (idx: number, patch: Partial<OrderRow>) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
-  const removeRow = (idx: number) => setRows((r) => r.filter((_, i) => i !== idx));
+  const removeRow = (idx: number) => {
+    setRows((r) => r.filter((_, i) => i !== idx));
+    setRowQtyErrors((e) => { const next = { ...e }; delete next[idx]; return next; });
+  };
 
   const itemById = (id: string) => items.find((i) => i.id === id);
   const subtotal = rows.reduce((sum, r) => {
@@ -130,7 +140,14 @@ const PlaceVendorOrder = () => {
         <div className="grid sm:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-1.5">Destination Name *</label>
-            <input value={destinationName} onChange={(e) => setDestinationName(e.target.value)} placeholder="e.g. Main Warehouse" className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border" />
+            <input
+              value={destinationName}
+              onChange={(e) => setDestinationName(e.target.value)}
+              onBlur={() => setDestNameError(vDestName())}
+              placeholder="e.g. Main Warehouse"
+              className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border ${destNameError ? errorInputClass : "border-border"}`}
+            />
+            <FieldError message={destNameError} />
           </div>
           <div>
             <label className="block text-sm font-medium text-muted-foreground mb-1.5">City</label>
@@ -158,7 +175,7 @@ const PlaceVendorOrder = () => {
             {rows.map((row, idx) => {
               const it = itemById(row.vendor_item_id);
               return (
-                <div key={idx} className="flex items-center gap-2">
+                <div key={idx} className="flex items-start gap-2">
                   <select
                     value={row.vendor_item_id}
                     onChange={(e) => updateRow(idx, { vendor_item_id: e.target.value })}
@@ -167,15 +184,19 @@ const PlaceVendorOrder = () => {
                     <option value="">— Select item —</option>
                     {items.map((i) => <option key={i.id} value={i.id}>{i.name} ({formatPKR(i.unit_price)}/{i.unit})</option>)}
                   </select>
-                  <input
-                    type="number" min={0.01} step="any" value={row.quantity}
-                    onChange={(e) => updateRow(idx, { quantity: Number(e.target.value) })}
-                    className="w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border"
-                  />
-                  <span className="text-sm text-muted-foreground w-28 text-right font-mono">
+                  <div className="w-24">
+                    <input
+                      type="number" min={0.01} step="any" value={row.quantity}
+                      onChange={(e) => updateRow(idx, { quantity: Number(e.target.value) })}
+                      onBlur={() => setRowQtyErrors((er) => ({ ...er, [idx]: vRowQty(row.quantity) }))}
+                      className={`w-24 px-3 py-2 text-sm rounded-lg bg-muted/50 border ${rowQtyErrors[idx] ? errorInputClass : "border-border"}`}
+                    />
+                    <FieldError message={rowQtyErrors[idx]} />
+                  </div>
+                  <span className="text-sm text-muted-foreground w-28 text-right font-mono pt-2">
                     {it ? formatPKR(it.unit_price * row.quantity) : "—"}
                   </span>
-                  <button onClick={() => removeRow(idx)} className="text-muted-foreground hover:text-destructive"><Trash2 size={16} /></button>
+                  <button onClick={() => removeRow(idx)} className="text-muted-foreground hover:text-destructive pt-2"><Trash2 size={16} /></button>
                 </div>
               );
             })}

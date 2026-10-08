@@ -4,6 +4,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { UserPlus, Loader2 } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useAuth } from "@/contexts/AuthContext";
+import FieldError from "@/components/FieldError";
+import { validate, required, isEmail, minLength, noSpecialChars, errorInputClass } from "@/lib/validation";
 
 // Public self-signup only ever creates a Customer Portal account — admin-side
 // roles (Admin / Customer Rep / Procurement Manager) are provisioned by an
@@ -18,18 +20,25 @@ const Signup = () => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string | null | undefined>>({});
+
+  const validateName = () => validate(name, required("Name is required"), noSpecialChars());
+  const validateEmail = () => validate(email, required("Email is required"), isEmail());
+  const validatePassword = () => validate(password, required("Password is required"), minLength(8));
+  const validateConfirm = () =>
+    !confirmPassword.trim() ? "Please confirm your password"
+    : confirmPassword !== password ? "Passwords do not match"
+    : null;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
-    }
+    const errs = {
+      name: validateName(), email: validateEmail(),
+      password: validatePassword(), confirmPassword: validateConfirm(),
+    };
+    setFieldErrors(errs);
+    if (Object.values(errs).some(Boolean)) return;
     try {
       await signup(name, email, password);
       navigate("/portal", { replace: true });
@@ -62,48 +71,52 @@ const Signup = () => {
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Full Name</label>
               <input
-                required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, name: validateName() }))}
                 placeholder="John Doe"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${fieldErrors.name ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.name} />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Email</label>
               <input
                 type="email"
-                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, email: validateEmail() }))}
                 placeholder="john@nexus.com"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${fieldErrors.email ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.email} />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Password</label>
               <input
                 type="password"
-                required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, password: validatePassword() }))}
                 placeholder="••••••••"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${fieldErrors.password ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.password} />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">Confirm Password</label>
               <input
                 type="password"
-                required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, confirmPassword: validateConfirm() }))}
                 placeholder="••••••••"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm ${fieldErrors.confirmPassword ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.confirmPassword} />
             </div>
 
             {error && (

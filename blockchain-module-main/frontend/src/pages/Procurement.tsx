@@ -13,6 +13,8 @@ import { useToast } from "@/hooks/use-toast";
 import OrderDetailModal from "@/components/OrderDetailModal";
 import InvoiceModal from "@/components/InvoiceModal";
 import { formatPKR } from "@/lib/currency";
+import FieldError from "@/components/FieldError";
+import { validate, isInteger, isPositive, isNonNegative, errorInputClass } from "@/lib/validation";
 
 const StatusBadge = ({ status }: { status: string }) => {
   const colors: Record<string, string> = {
@@ -93,6 +95,10 @@ const Procurement = () => {
   const [formPrice, setFormPrice] = useState("");
   const [placing, setPlacing] = useState(false);
   const [vendorFilter, setVendorFilter] = useState<{ id: string; name: string } | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ formQty?: string | null; formPrice?: string | null }>({});
+
+  const vQty = () => validate(String(formQty), isInteger(), isPositive("Quantity must be greater than 0"));
+  const vPrice = () => validate(formPrice, isNonNegative("Price cannot be negative"));
 
   const load = useCallback(async () => {
     try {
@@ -143,6 +149,9 @@ const Procurement = () => {
 
   const handlePlaceOrder = async () => {
     if (!formItem) return;
+    const errs = { formQty: vQty(), formPrice: vPrice() };
+    setFieldErrors(errs);
+    if (errs.formQty || errs.formPrice) return;
     setPlacing(true);
     try {
       const res = await manualReorder(formItem, formQty, formPrice ? Number(formPrice) : undefined);
@@ -150,6 +159,7 @@ const Procurement = () => {
       setFormItem("");
       setFormQty(100);
       setFormPrice("");
+      setFieldErrors({});
       await load();
       if (res?.order_id) setInvoiceOrderId(res.order_id);
       setTab("active");
@@ -297,8 +307,10 @@ const Procurement = () => {
                 type="number"
                 value={formQty}
                 onChange={(e) => setFormQty(Number(e.target.value))}
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                onBlur={() => setFieldErrors((f) => ({ ...f, formQty: vQty() }))}
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${fieldErrors.formQty ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.formQty} />
             </div>
             <div>
               <label className="block text-sm font-medium text-muted-foreground mb-1.5">
@@ -308,9 +320,11 @@ const Procurement = () => {
                 type="number"
                 value={formPrice}
                 onChange={(e) => setFormPrice(e.target.value)}
+                onBlur={() => setFieldErrors((f) => ({ ...f, formPrice: vPrice() }))}
                 placeholder="Leave blank to omit"
-                className="w-full px-4 py-2.5 rounded-lg bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className={`w-full px-4 py-2.5 rounded-lg bg-muted/50 border text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 ${fieldErrors.formPrice ? errorInputClass : "border-border"}`}
               />
+              <FieldError message={fieldErrors.formPrice} />
               {estimatedTotal != null && (
                 <p className="text-xs text-muted-foreground mt-1.5">
                   Estimated total:{" "}

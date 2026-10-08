@@ -19,6 +19,8 @@ import {
 import { formatPKR } from "@/lib/currency";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import FieldError from "@/components/FieldError";
+import { validate, required, errorInputClass } from "@/lib/validation";
 
 const PROGRESS_STEPS = [
   { key: "PLACED", label: "Order Placed" },
@@ -176,8 +178,12 @@ const TrackingDetail = () => {
   const [staffLocation, setStaffLocation] = useState("");
   const [staffNote, setStaffNote] = useState("");
   const [staffStatus, setStaffStatus] = useState<"InTransit" | "OutForDelivery">("InTransit");
+  const [cancelReasonError, setCancelReasonError] = useState<string | null>(null);
+  const [disputeReasonError, setDisputeReasonError] = useState<string | null>(null);
 
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const vCancelReason = () => validate(cancelReason, required("A reason is required"));
+  const vDisputeReason = () => validate(disputeReason, required("Please describe the issue"));
 
   const load = useCallback((silent = false) => {
     if (!orderId) return;
@@ -400,11 +406,23 @@ const TrackingDetail = () => {
           ) : (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">Cancels the escrow contract on-chain and releases the held funds. Only possible before arrival.</p>
-              <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Reason (required)" className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
+              <input
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                onBlur={() => setCancelReasonError(vCancelReason())}
+                placeholder="Reason (required)"
+                className={`w-full px-3 py-2 text-sm rounded-lg border bg-muted/30 ${cancelReasonError ? errorInputClass : "border-border"}`}
+              />
+              <FieldError message={cancelReasonError} />
               <div className="flex gap-2">
-                <button onClick={() => { setShowCancelContract(false); setCancelReason(""); }} className="text-sm px-4 py-2 rounded-lg border border-border">Back</button>
+                <button onClick={() => { setShowCancelContract(false); setCancelReason(""); setCancelReasonError(null); }} className="text-sm px-4 py-2 rounded-lg border border-border">Back</button>
                 <button
-                  onClick={async () => { await run(() => cancelVendorContract(order.id, cancelReason)); setShowCancelContract(false); setCancelReason(""); }}
+                  onClick={async () => {
+                    const err = vCancelReason();
+                    setCancelReasonError(err);
+                    if (err) return;
+                    await run(() => cancelVendorContract(order.id, cancelReason)); setShowCancelContract(false); setCancelReason("");
+                  }}
                   disabled={acting || !cancelReason.trim()}
                   className="text-sm font-medium px-4 py-2 rounded-lg bg-destructive text-white disabled:opacity-50"
                 >
@@ -502,11 +520,24 @@ const TrackingDetail = () => {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-background rounded-xl p-6 max-w-md w-full space-y-4">
             <h3 className="font-heading font-bold text-lg">Raise Dispute</h3>
-            <textarea value={disputeReason} onChange={(e) => setDisputeReason(e.target.value)} placeholder="What's wrong with this delivery?" rows={3} className="w-full px-3 py-2 text-sm rounded-lg border border-border bg-muted/30" />
+            <textarea
+              value={disputeReason}
+              onChange={(e) => setDisputeReason(e.target.value)}
+              onBlur={() => setDisputeReasonError(vDisputeReason())}
+              placeholder="What's wrong with this delivery?"
+              rows={3}
+              className={`w-full px-3 py-2 text-sm rounded-lg border bg-muted/30 ${disputeReasonError ? errorInputClass : "border-border"}`}
+            />
+            <FieldError message={disputeReasonError} />
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowDisputeModal(false)} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
+              <button onClick={() => { setShowDisputeModal(false); setDisputeReasonError(null); }} className="px-4 py-2 text-sm rounded-lg border border-border">Cancel</button>
               <button
-                onClick={async () => { setShowDisputeModal(false); await run(() => raiseDispute(order.id, disputeReason)); setDisputeReason(""); }}
+                onClick={async () => {
+                  const err = vDisputeReason();
+                  setDisputeReasonError(err);
+                  if (err) return;
+                  setShowDisputeModal(false); await run(() => raiseDispute(order.id, disputeReason)); setDisputeReason("");
+                }}
                 disabled={!disputeReason.trim()}
                 className="px-4 py-2 text-sm rounded-lg bg-destructive text-white disabled:opacity-50"
               >

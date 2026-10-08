@@ -12,6 +12,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatPKR } from "@/lib/currency";
+import FieldError from "@/components/FieldError";
+import { validate, isInteger, isNonNegative, errorInputClass } from "@/lib/validation";
 
 interface Props {
   order: ProcurementOrder;
@@ -57,6 +59,9 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   const [ciFinal, setCiFinal]     = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [signing, setSigning]     = useState(false);
+  const [ciQtyError, setCiQtyError] = useState<string | null>(null);
+
+  const vCiQty = () => validate(String(ciQty), isInteger(), isNonNegative("Quantity cannot be negative"));
 
   // Billing
   const [invoice, setInvoice]           = useState<Invoice | null>(null);
@@ -91,6 +96,9 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
   };
 
   const handleCheckin = async () => {
+    const err = vCiQty();
+    setCiQtyError(err);
+    if (err) return;
     setSubmitting(true);
     try {
       const res = await submitDeliveryCheckin(order.id, {
@@ -412,8 +420,10 @@ const OrderDetailModal = ({ order: initialOrder, onClose, onUpdate }: Props) => 
                         type="number"
                         value={ciQty}
                         onChange={(e) => setCiQty(Number(e.target.value))}
-                        className="w-full px-3 py-2 text-sm rounded-lg bg-muted/50 border border-border focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        onBlur={() => setCiQtyError(vCiQty())}
+                        className={`w-full px-3 py-2 text-sm rounded-lg bg-muted/50 border focus:outline-none focus:ring-2 focus:ring-primary/50 ${ciQtyError ? errorInputClass : "border-border"}`}
                       />
+                      <FieldError message={ciQtyError} />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-muted-foreground mb-1">Location</label>
